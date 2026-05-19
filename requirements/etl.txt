@@ -2,5 +2,7 @@
 apache-airflow==2.8.0
 apache-airflow-providers-postgres==5.10.0
 apache-airflow-providers-redis==3.6.0
-great-expectations==0.18.19
+# great-expectations==0.18.19 has hard dependency on ipywidgets → jupyterlab-widgets
+# which exceeds Windows MAX_PATH (260 chars) in long directory paths.
+# Equivalent validation implemented in src/validation/expectations.py (pure pandas).
 boto3==1.34.0

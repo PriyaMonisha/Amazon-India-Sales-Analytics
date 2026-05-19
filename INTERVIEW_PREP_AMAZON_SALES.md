@@ -30,16 +30,20 @@
 ## Section 2 — Data Engineering
 
 **Q4. Why a star schema? What is the tradeoff vs snowflake schema?**
-> *(Fill in after Section 1)*
+
+> A star schema has one fact table (fact_transactions, ~1.1M rows) connected to denormalized dimension tables (dim_customers, dim_products, dim_time). Snowflake schema would normalize further — e.g., a separate dim_city table referenced by dim_customers. The tradeoff: star schema uses more storage (city is stored per customer row) but query joins are simpler and faster — one level of joins vs two or three. For analytics workloads where query speed matters more than write efficiency, star schema is standard. We also built composite indexes on (order_date, customer_id) to accelerate the most common groupby patterns.
 
 **Q5. You have 1.1M rows. How did you handle the ETL performance?**
-> *(Fill in — chunked inserts, upsert strategy, indexes)*
+
+> Two strategies: First, chunked inserts — we write 10,000 rows per transaction instead of one giant commit. This prevents timeout and allows partial recovery. Second, we use upsert (INSERT ... ON CONFLICT DO UPDATE) instead of DELETE+INSERT — this lets us re-run the ETL pipeline safely without data loss if it crashes mid-way. The upsert strategy means the ETL is idempotent: running it twice gives the same result. We also created indexes on the fact table *after* the initial bulk load (not before), because PostgreSQL indexes slow down bulk inserts significantly.
 
 **Q6. Walk me through one data quality challenge you solved.**
-> *(Fill in — pick the most interesting of the 10 cleaning challenges)*
+
+> The price columns had three separate problems: the rupee symbol (₹1,25,000), Indian number formatting with multiple commas (₹1,25,000 = 125,000 not 1,25,000), and string values like "Price on Request". A single `float(val)` call would fail on all of these. Our `_parse_price()` function strips the ₹ symbol with regex, removes all commas, then casts to float. "Price on Request" and empty strings return None, which we then impute with the subcategory median. The key insight: we never silently ignore the problem — we track `prices_imputed` in our cleaning log, so we know exactly how many rows needed imputation after every ETL run.
 
 **Q7. What is Great Expectations? Why did you use it?**
-> *(Fill in — ge.from_pandas(), 7 expectations, fail-fast in Airflow)*
+
+> Great Expectations is a data quality framework that lets you define "expectations" — rules that data must satisfy. We use `ge.from_pandas(df)` (not the full DataContext) for simplicity. We define 7 expectations: price between 1–500K, rating mostly 0–5, delivery_days mostly 0–30, payment method in a known set, transaction_id unique, customer_id not null, row count between 1M–1.3M. If any expectation fails, we raise RuntimeError. In Airflow, this marks the validation_dag task as failed, which blocks the feature_engineering_dag and model_retraining_dag from running. This prevents bad data from silently flowing into our ML models. We pinned to v0.18.19 because v1.0+ has a completely different API.
 
 ---
 
