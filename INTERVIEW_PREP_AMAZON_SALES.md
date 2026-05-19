@@ -35,15 +35,40 @@
 
 **Q5. You have 1.1M rows. How did you handle the ETL performance?**
 
-> Two strategies: First, chunked inserts — we write 10,000 rows per transaction instead of one giant commit. This prevents timeout and allows partial recovery. Second, we use upsert (INSERT ... ON CONFLICT DO UPDATE) instead of DELETE+INSERT — this lets us re-run the ETL pipeline safely without data loss if it crashes mid-way. The upsert strategy means the ETL is idempotent: running it twice gives the same result. We also created indexes on the fact table *after* the initial bulk load (not before), because PostgreSQL indexes slow down bulk inserts significantly.
+> Two strategies: First, chunked inserts — we write 10,000 rows per transaction instead of one giant commit. This prevents timeout and allows partial recovery. Second, we use upsert (`INSERT ... ON CONFLICT DO UPDATE`) instead of DELETE+INSERT — this lets us re-run the ETL pipeline safely without data loss if it crashes mid-way. The upsert strategy means the ETL is idempotent: running it twice gives the same result. We also created indexes *after* the initial bulk load (not before), because PostgreSQL indexes slow down bulk inserts significantly.
 
 **Q6. Walk me through one data quality challenge you solved.**
 
-> The price columns had three separate problems: the rupee symbol (₹1,25,000), Indian number formatting with multiple commas (₹1,25,000 = 125,000 not 1,25,000), and string values like "Price on Request". A single `float(val)` call would fail on all of these. Our `_parse_price()` function strips the ₹ symbol with regex, removes all commas, then casts to float. "Price on Request" and empty strings return None, which we then impute with the subcategory median. The key insight: we never silently ignore the problem — we track `prices_imputed` in our cleaning log, so we know exactly how many rows needed imputation after every ETL run.
+> The price columns had three separate problems: the rupee symbol (₹), Indian number formatting with multiple commas (₹1,25,000 = 125,000), and string values like "Price on Request". A single `float(val)` call would fail on all of these. Our `_parse_price()` function strips the ₹ symbol with regex, removes all commas, then casts to float. "Price on Request" and empty strings return None, which we then impute with the subcategory median. The key insight: we never silently ignore the problem — we track `prices_imputed` in a timestamped cleaning log, so we know exactly how many rows needed imputation after every ETL run.
 
-**Q7. What is Great Expectations? Why did you use it?**
+**Q7. What data validation framework did you use? Why?**
 
-> Great Expectations is a data quality framework that lets you define "expectations" — rules that data must satisfy. We use `ge.from_pandas(df)` (not the full DataContext) for simplicity. We define 7 expectations: price between 1–500K, rating mostly 0–5, delivery_days mostly 0–30, payment method in a known set, transaction_id unique, customer_id not null, row count between 1M–1.3M. If any expectation fails, we raise RuntimeError. In Airflow, this marks the validation_dag task as failed, which blocks the feature_engineering_dag and model_retraining_dag from running. This prevents bad data from silently flowing into our ML models. We pinned to v0.18.19 because v1.0+ has a completely different API.
+> I originally specified Great Expectations, but GE 0.18.19 has a hard dependency on `ipywidgets` → `jupyterlab-widgets`, which ships static files with 300+ character file paths that exceed Windows' MAX_PATH limit (260 chars) in our project directory structure. Rather than requiring users to enable Long Path support (a system-level change), I switched to **Pandera** — a pure Python DataFrame schema validation library with zero Jupyter dependencies. It installs in seconds and gives the same quality gates via a cleaner, type-annotated API:
+>
+> ```python
+> Column("final_amount_inr", Check.in_range(1, 500_000))
+> Column("customer_id", nullable=False)
+> Check(lambda df: 1_000_000 <= len(df) <= 1_300_000)
+> ```
+>
+> The placement is the same as GE would be: runs as a dedicated Airflow `validation_dag` after `data_cleaning_dag`, before `feature_engineering_dag`. If any of the 7 rules fail, `SchemaError` is raised, Airflow marks the task failed, and all downstream DAGs are blocked — the feature store and model retraining never run on corrupt data.
+>
+> **Follow-up: "What are the 7 rules?"**
+> 1. `final_amount_inr` between ₹1–₹5,00,000 (catches paise-scale exports, test data)
+> 2. `customer_rating` between 0–5 (nullable — 30% missing is expected and fine)
+> 3. `delivery_days` between 0–30 (catches "Same Day" text not cleaned, -3 day bugs)
+> 4. `payment_method` in known set (catches new payment method not mapped in transform)
+> 5. `transaction_id` unique (catches upsert bugs, file processed twice)
+> 6. `customer_id` not null (catches upstream system anonymization errors)
+> 7. Row count between 1M–1.3M (catches accidentally loading only 1 year, truncation)
+
+**Q8. Why is idempotent ETL important? What does "upsert" mean?**
+
+> Idempotent means: running the same operation twice produces the same result. In ETL, if the pipeline crashes at row 500,000 and restarts, idempotency ensures you don't end up with duplicate data or missing data — you just reload and the database ends up in exactly the same state. We achieve this with PostgreSQL's `INSERT ... ON CONFLICT (transaction_id) DO UPDATE SET ...` — if a row already exists with the same transaction_id, it's updated rather than duplicated. This is critical when Airflow retries a failed task automatically.
+
+**Q9. Why did you not put a FK constraint on fact_transactions.order_date → dim_time?**
+
+> FK constraints on fact tables in high-volume ETL cause two problems: (1) The constraint is checked on every insert — at 1.1M rows, this adds significant overhead. (2) Rows with invalid dates (NaT after failed parsing) would fail the insert entirely, causing the whole load to fail rather than gracefully handling bad dates. Our approach: map NaT dates to a sentinel row ('1900-01-01', festival='Unknown') in dim_time, and validate date ranges with Pandera before the load. Application-layer validation is more flexible and faster than DB-enforced FK constraints on fact tables.
 
 ---
 
