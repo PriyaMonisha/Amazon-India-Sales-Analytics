@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'amazon-fastapi'
+    static_configs:
+      - targets: ['fastapi:8000']   # Docker service name — NOT localhost
+    metrics_path: '/metrics'
