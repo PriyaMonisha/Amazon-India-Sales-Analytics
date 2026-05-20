@@ -14,8 +14,10 @@ RANDOM_STATE = 42
 FAST_MODE = os.getenv("FAST_MODE", "true").lower() == "true"
 
 # --- Database (postgresql+psycopg2:// required by SQLAlchemy) ---
+# LOCAL uses port 5433 because 5432 is taken by a pre-existing local PostgreSQL.
+# Docker containers talk to each other on port 5432 (internal Docker network).
 DB_URLS = {
-    Env.LOCAL:   "postgresql+psycopg2://postgres:postgres@localhost:5432/amazon_sales",
+    Env.LOCAL:   "postgresql+psycopg2://postgres:postgres@localhost:5433/amazon_sales",
     Env.DOCKER:  "postgresql+psycopg2://postgres:postgres@postgres:5432/amazon_sales",
     Env.AIRFLOW: os.getenv(
         "AMAZON_DB_URL",  # custom var — NOT AIRFLOW_CONN_POSTGRES_DEFAULT

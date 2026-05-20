@@ -42,23 +42,16 @@ logger.info(f"RAW_DATA_DIR: {config.RAW_DATA_DIR}")
 # ## Step 1: Extract raw CSVs
 
 # %%
-# Reference project data directory (11 yearly CSVs)
-# Adjust this path to point to where the CSVs live on your machine.
-# Default: data/raw/ within this project, or the reference project folder.
-REF_DATA_DIR = Path(r"c:\Users\Suba\Documents\Data science\Guvi\Proj Amazon_India_Sales_Analytics - 2\amazon_sales_datasets")
-REF_PRODUCT_DIR = Path(r"c:\Users\Suba\Documents\Data science\Guvi\Proj Amazon_India_Sales_Analytics - 2\product_dataset")
-
-# Use reference data dir (no need to copy 300MB of CSVs)
-RAW_SALES_DIR = REF_DATA_DIR if REF_DATA_DIR.exists() else config.RAW_DATA_DIR
+# CSVs are in data/raw/ (11 yearly files + product catalog)
+RAW_SALES_DIR = config.RAW_DATA_DIR
 
 logger.info(f"Loading CSVs from: {RAW_SALES_DIR}")
 df_raw = load_raw_csvs(RAW_SALES_DIR)
 logger.info(f"Raw sales: {len(df_raw):,} rows × {len(df_raw.columns)} columns")
 
 # %%
-# Load product catalog
-PRODUCT_DIR = REF_PRODUCT_DIR if REF_PRODUCT_DIR.exists() else config.RAW_DATA_DIR.parent / "product_dataset"
-df_products_raw = load_product_catalog(PRODUCT_DIR)
+# Load product catalog (also in data/raw/)
+df_products_raw = load_product_catalog(config.RAW_DATA_DIR)
 logger.info(f"Product catalog: {len(df_products_raw):,} rows")
 
 # %%
@@ -106,13 +99,13 @@ for col in ["payment_method", "return_status", "is_festival_sale", "customer_tie
 from src.validation.expectations import validate_sales, validate_products
 
 try:
-    validate_sales(df_clean)
+    validate_sales(df_clean, fast_mode=config.FAST_MODE)
     validate_products(df_products_clean)
-    logger.info("GE validation PASSED for both datasets.")
+    logger.info("Pandera validation PASSED for both datasets.")
 except RuntimeError as e:
-    logger.error(f"GE validation FAILED: {e}")
-    # In Airflow: this would mark the task failed and stop downstream DAGs.
-    # In notebook mode: print the error and continue for debugging.
+    logger.error(f"Pandera validation FAILED: {e}")
+    # In Airflow: marks task failed, blocks downstream DAGs.
+    # In notebook mode: prints warning and continues for debugging.
     print(f"WARNING: {e}")
 
 # %% [markdown]

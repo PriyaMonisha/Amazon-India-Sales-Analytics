@@ -6,7 +6,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-def load_raw_csvs(data_dir: Path, file_pattern: str = "amazon_india_*.csv") -> pd.DataFrame:
+def load_raw_csvs(data_dir: Path, file_pattern: str = "amazon_india_20*.csv") -> pd.DataFrame:
     """
     Load all yearly Amazon India CSVs from data_dir, standardize column names, and concat.
 
@@ -66,13 +66,10 @@ def load_raw_csvs(data_dir: Path, file_pattern: str = "amazon_india_*.csv") -> p
 
 
 def load_product_catalog(data_dir: Path, filename: str = "amazon_india_products_catalog.csv") -> pd.DataFrame:
-    """Load the product catalog CSV."""
-    path = data_dir.parent / "product_dataset" / filename
+    """Load the product catalog CSV from data_dir."""
+    path = data_dir / filename
     if not path.exists():
-        # Try directly in data_dir
-        path = data_dir / filename
-    if not path.exists():
-        raise FileNotFoundError(f"Product catalog not found. Expected at: {path}")
+        raise FileNotFoundError(f"Product catalog not found at: {path}")
 
     df = pd.read_csv(path, low_memory=False)
     df.columns = (
