@@ -16,14 +16,15 @@
 
 **Q1. Tell me about your Amazon India Sales Analytics project in 2 minutes.**
 
-> *(Fill in after completing all sections with real numbers)*
-> Amazon India Sales Analytics is a production-grade ML platform I built on 11 years (2015–2025) of transaction data — roughly 1.1 million rows. The project combines a data engineering layer (11 CSVs → PostgreSQL star schema, orchestrated by Airflow), a feature store (Feast + Redis for training-serving consistency), five ML models (churn prediction, sales forecasting, price recommendation, product recommendation, anomaly detection), and a full production serving stack: FastAPI with Prometheus instrumentation, KS drift monitoring via Evidently AI, four Grafana dashboards, and a Streamlit multi-page dashboard. Everything runs in a 15-service Docker Compose stack.
+> Amazon India Sales Analytics is a production-grade ML platform I built on 11 years (2015–2025) of e-commerce transaction data — 1,127,609 raw rows across 11 yearly CSV files. The project has four layers: First, a data engineering layer — an ETL pipeline that cleans 10 real data quality challenges, loads into a PostgreSQL star schema with 4 tables, and is orchestrated by Airflow. Second, a feature store built on Feast + Redis that serves pre-computed customer, product, and geographic features with sub-millisecond latency while guaranteeing training-serving consistency. Third, five ML models — churn prediction (XGBoost), sales forecasting (Prophet per subcategory), price recommendation (RandomForest), product recommendation (FP-Growth market basket), and anomaly detection (IsolationForest) — all tracked in MLflow. Fourth, a production serving stack: FastAPI with Prometheus metrics, Evidently AI drift detection, four Grafana dashboards, and a 6-page Streamlit dashboard. Everything runs in a 15-service Docker Compose stack including MinIO for artifact storage and Airflow for orchestration.
 
 **Q2. Why Amazon India specifically? Why 11 years of data?**
-> *(Fill in)*
+
+> Amazon India is one of the world's most complex e-commerce markets — 28 states, 6 official languages, massive income diversity from Metro to Rural, and a unique payment evolution story (COD → UPI). Eleven years of data (2015–2025) captures the full arc: early e-commerce adoption, demonetization's impact on digital payments, COVID's demand shock, and post-COVID normalisation. Single-year data would miss all of this context. For ML models specifically, 11 years gives enough historical signal for Prophet to learn genuine seasonal patterns (Diwali, Republic Day) rather than overfitting to one or two festivals.
 
 **Q3. What business decisions does this system enable?**
-> *(Fill in)*
+
+> Six concrete decisions: (1) **Inventory planning** — the Prophet forecast tells operations how much stock to procure per subcategory 8 weeks before festival season. (2) **Customer retention** — churn model identifies customers likely to stop buying; marketing sends personalised re-engagement offers. (3) **Pricing strategy** — price recommendation model outputs the optimal discount percentage that maximises revenue without eroding margin. (4) **Cross-selling** — FP-Growth association rules power "Customers who bought X also bought Y" recommendations. (5) **Quality control** — anomaly detection flags sudden spikes in return rates, signalling a product quality issue before it scales. (6) **Campaign planning** — EDA shows Diwali and Back-to-School are the top revenue festivals, informing budget allocation.
 
 ---
 
@@ -72,88 +73,122 @@
 
 ---
 
-## Section 3 — Feature Store
+## Section 3 — Exploratory Data Analysis (EDA)
 
-**Q8. What is training-serving skew? How did your feature store prevent it?**
-> *(Fill in after Section 3)*
+**Q10. Walk me through your EDA. What were the most important findings?**
 
-**Q9. Why Feast over a custom Redis implementation?**
+> I built 21 analyses querying PostgreSQL via SQLAlchemy, saving all charts to artifacts/charts/ so Streamlit can load them dynamically. The five most important findings:
+>
+> 1. **Smartphones = 73% of revenue** — one subcategory dominates. Everything else is secondary. This shaped which categories to prioritise in forecasting and recommendations.
+> 2. **UPI replaced COD as India's dominant payment method** — grew from near-zero in 2015 to dominant by 2023. The payment evolution chart is a proxy for India's digital payments revolution.
+> 3. **Festival sale orders have LOWER average order value (INR 47K) than regular sales (INR 78K)** — counterintuitive, but festivals attract budget-conscious buyers who purchase discounted mid-range products, not premium purchases.
+> 4. **Only 6% of customers are Champions; 38% are Hibernating** — massive opportunity for re-engagement campaigns targeting the 24% At Risk segment.
+> 5. **Top 36% of products generate 80% of revenue** — not the classic 20%, but the Pareto principle still holds. Stock decisions should focus on these 720 products.
+
+**Q11. What was the most counterintuitive finding in your EDA?**
+
+> Festival sale average order value being lower than regular sales. You'd expect Diwali shoppers to splurge on premium items — but the data shows the opposite. Festival sales attract deal hunters who buy mid-range phones at 40-50% off. The total festival VOLUME is huge (Back to School generated 185M INR, Diwali 171M INR), but each individual order is smaller. The insight: festival campaigns should focus on moving high-volume, mid-range inventory, not trying to upsell premium products.
+
+**Q12. Why did you use PostgreSQL for EDA instead of pandas on CSV?**
+
+> At 1.1M rows, pandas aggregations take 3-5 seconds per query. PostgreSQL with indexes (on order_date, customer_id, subcategory) runs the same GROUP BY in under 200ms. More importantly, having all analyses query the same database ensures consistency — if the ETL pipeline updates data, every chart automatically reflects the latest state on the next notebook run. It also demonstrates the full data engineering → analytics pipeline rather than just loading a CSV.
+
+**Q13. How did you handle the seasonal patterns in your EDA?**
+
+> Two approaches: First, the Monthly Revenue Heatmap (Year × Month grid, colour = revenue) makes seasonal patterns immediately visible — December is always the darkest cell, confirming Q4 as peak season. Second, I computed year-over-year growth percentages on the revenue trend and annotated each year's point. The 2020 COVID spike is clearly visible (+33% vs 2019), as is the post-2020 normalisation. For the forecasting models, this seasonality data was used to configure Prophet's holiday parameters — custom Diwali dates with a ±7-day window.
+
+**Q14. What were your EDA technical choices and why?**
+
+> Three key choices: (1) **All matplotlib/seaborn, no Plotly for static charts** — Plotly's `write_image()` uses Kaleido which launches a Chrome browser instance per chart (5 seconds each). With 21 charts, that's 100+ seconds of browser startup. Matplotlib saves to PNG in under 1 second. (2) **Discrete Set2 colour palette everywhere** — never sequential palettes on categorical data (they imply ordering where none exists). (3) **`showfliers=False` on boxplots** — keeping extreme outliers (1.2M INR orders) on the boxplot made the Y-axis 10x taller and hid the IQR where 95% of data lives. Hiding outliers with a note is more honest than distorting the chart scale.
+
+**Q15. How did you handle the RFM segmentation technically?**
+
+> RFM scores each customer 1-5 on Recency (time since last purchase), Frequency (number of orders), and Monetary value (total spend). The challenge was `pd.qcut` failing when there aren't enough distinct values to create 5 bins — common in FAST_MODE with a 50K sample where many customers appear only once. I wrote a `safe_qcut()` function that falls back to `pd.cut()` on rank-ordered values when qcut fails. The segments are then rule-based: Champions = R≥4 AND F≥4 AND M≥4; At Risk = R≤2 AND F≥3; etc. This is explainable to non-technical stakeholders — no black box.
+
+---
+
+## Section 4 — Feature Store
+
+**Q16. What is training-serving skew? How did your feature store prevent it?**
+> *(Fill in after Section 3 is built)*
+
+**Q17. Why Feast over a custom Redis implementation?**
 > *(Key answer: point-in-time correctness, feature registry, offline/online split)*
 
-**Q10. What's the difference between customer_training_features and customer_prediction_outputs?**
+**Q18. What's the difference between customer_training_features and customer_prediction_outputs?**
 > *(Fill in — circular leakage prevention, two FeatureViews)*
 
 ---
 
-## Section 4 — Model Selection & Evaluation
+## Section 5 — Model Selection & Evaluation
 
-**Q11. Why XGBoost for churn over Logistic Regression?**
-> *(Fill in after Section 4)*
+**Q19. Why XGBoost for churn over Logistic Regression?**
+> *(Fill in after Section 4 — ML models built)*
 
-**Q12. How did you handle class imbalance in the churn model?**
+**Q20. How did you handle class imbalance in the churn model?**
 > *(Fill in — scale_pos_weight, ROC-AUC + F1, threshold optimization from PR curve)*
 
-**Q13. Why Prophet over ARIMA for Indian e-commerce sales forecasting?**
+**Q21. Why Prophet over ARIMA for Indian e-commerce sales forecasting?**
 > *(Key answer: handles non-linear trend, multiplicative seasonality, festival holidays, built-in uncertainty intervals)*
 
-**Q14. What is WMAPE and why did you use it over MAPE?**
+**Q22. What is WMAPE and why did you use it over MAPE?**
 > *(Key answer: MAPE explodes when denominator near zero — new subcategories in 2015 have near-zero history)*
 
-**Q15. How did you construct churn labels? What is right-censoring?**
+**Q23. How did you construct churn labels? What is right-censoring?**
 > *(Key answer: 90-day inactivity after reference date; right-censoring = customers near dataset end have incomplete observation windows — excluded them)*
 
 ---
 
-## Section 5 — Model Evaluation & Thresholds
+## Section 6 — Model Evaluation & Thresholds
 
-**Q16. How did you choose the churn probability threshold?**
+**Q24. How did you choose the churn probability threshold?**
 > *(Fill in — precision-recall curve, business cost ratio: false negative cost >> false positive cost)*
 
-**Q17. What is your churn model's actual ROC-AUC and F1?**
+**Q25. What is your churn model's actual ROC-AUC and F1?**
 > *(Fill in with real numbers from training run)*
 
-**Q18. How does SHAP help your business users?**
+**Q26. How does SHAP help your business users?**
 > *(Fill in — /predict/churn/{id}/explain endpoint, top_factors per customer)*
 
 ---
 
-## Section 6 — Time Series & Forecasting
+## Section 7 — Time Series & Forecasting
 
-**Q19. Walk me through your Prophet setup for Indian e-commerce.**
+**Q27. Walk me through your Prophet setup for Indian e-commerce.**
 > *(Fill in — custom Diwali holidays, multiplicative seasonality, monthly freq, WMAPE results)*
 
-**Q20. How did you validate your forecast models?**
+**Q28. How did you validate your forecast models?**
 > *(Fill in — WMAPE < 25% threshold, train 2015–2023, eval on 2024)*
 
 ---
 
-## Section 7 — MLOps & Pipeline
+## Section 8 — MLOps & Pipeline
 
-**Q21. How does your retraining pipeline work end-to-end?**
+**Q29. How does your retraining pipeline work end-to-end?**
 > *(Fill in — model_retraining_dag, MLflow comparison, threshold gate before promotion)*
 
-**Q22. What is MLflow? How did you use it?**
+**Q30. What is MLflow? How did you use it?**
 > *(Fill in — experiment tracking, 3-way model comparison, optimal_threshold logged)*
 
-**Q23. How does your Airflow pipeline handle failures?**
-> *(Fill in — TriggerDagRunOperator, GE validation blocks downstream, individual try/except)*
+**Q31. How does your Airflow pipeline handle failures?**
+> *(Fill in — TriggerDagRunOperator, validation blocks downstream, individual try/except)*
 
 ---
 
-## Section 8 — Monitoring & Drift Detection
+## Section 9 — Monitoring & Drift Detection
 
-**Q24. What is model drift? How do you detect it?**
+**Q32. What is model drift? How do you detect it?**
 > *(Fill in — Evidently AI DataDriftPreset, KS test, drift_score key, Prometheus Gauge export)*
 
-**Q25. What happens when your KS statistic exceeds 0.10?**
+**Q33. What happens when your KS statistic exceeds 0.10?**
 > *(Fill in — DRIFT_ALERTS counter incremented, Grafana panel turns red, triggers model_retraining_dag)*
 
-**Q26. Why Evidently over raw KS test?**
+**Q34. Why Evidently over raw KS test?**
 > *(Fill in — per-feature drift, HTML reports, richer than univariate KS)*
 
 ---
 
-## Section 9 — Production & Architecture
+## Section 10 — Production & Architecture
 
 **Q27. Explain your system architecture in 2 minutes.**
 > *(Fill in — data flow: CSVs → MinIO → Airflow → PostgreSQL → Feast/Redis → FastAPI → Prometheus → Grafana → Streamlit)*
@@ -169,9 +204,9 @@
 
 ---
 
-## Section 10 — SQL Questions (Live Coding)
+## Section 11 — SQL Questions (Live Coding)
 
-**Q31. Write a query to find the top 5 customers by CLV per state.**
+**Q35. Write a query to find the top 5 customers by CLV per state.**
 ```sql
 WITH customer_clv AS (
     SELECT
@@ -200,7 +235,7 @@ WHERE state_rank <= 5
 ORDER BY customer_state, state_rank;
 ```
 
-**Q32. Monthly revenue by subcategory (last 12 months):**
+**Q36. Monthly revenue by subcategory (last 12 months):**
 ```sql
 SELECT
     DATE_TRUNC('month', f.order_date) AS revenue_month,
@@ -215,26 +250,32 @@ ORDER BY 1, monthly_revenue DESC;
 
 ---
 
-## Section 11 — Behavioral / STAR Format
+## Section 12 — Behavioral / STAR Format
 
-**Q33. Describe the biggest technical challenge and how you solved it.**
-> *(Fill in — Evidently result structure bug, Feast path resolution, Docker healthcheck gap, or your actual biggest challenge)*
+**Q37. Describe the biggest technical challenge and how you solved it.**
 
-**Q34. How did you ensure reproducibility?**
-> *(Key points: RANDOM_STATE=42 everywhere, MLflow tracks all params, config.py single source, APP_ENV for environment isolation)*
+> The biggest challenge was that Plotly's `fig.write_image()` for saving charts launched a full Chrome browser via Kaleido for each chart — 3-5 seconds per chart. With 21 charts, the EDA notebook took 100+ seconds just for chart export, and on some machines Kaleido crashed mid-run leaving corrupt PNG files. I diagnosed the root cause, then completely rewrote the EDA notebook using matplotlib/seaborn instead of Plotly for all static charts. The result: 21 charts generated in 41 seconds total with zero browser dependency. The tradeoff (less interactive charts) was acceptable since Streamlit displays static images anyway. This is the kind of practical engineering decision that matters in production — choose the right tool for the job, not the flashiest one.
+
+**Q38. How did you handle a counterintuitive finding in your data?**
+
+> The festival sale average order value being LOWER than regular sales (INR 47K vs INR 78K). My first instinct was "this must be a data quality bug." I investigated: verified the query was correct, checked the sample sizes (34K regular vs 15K festival orders), and cross-checked against the individual festival revenue chart. The finding held — it's real. The explanation: festivals attract budget-conscious buyers who wait for discounts on mid-range products (15K-30K phones). Regular periods have premium full-price purchases by less price-sensitive customers. I documented this in EDA_INSIGHTS.md with the business interpretation, so the marketing team doesn't make the wrong assumption that festival = premium customer.
+
+**Q39. How did you ensure reproducibility?**
+
+> Four practices: (1) `RANDOM_STATE = 42` defined once in config.py and passed everywhere — never hardcoded inline. (2) MLflow logs every training run's exact parameters, metrics, and git commit hash — any run from 6 months ago can be reproduced by reading its MLflow entry. (3) `config.py` with `APP_ENV` enum — local vs Docker vs Airflow all resolve to the correct database URL without any code changes. (4) Pinned dependency versions in requirements/*.txt — `pandera==0.31.1`, `xgboost==2.0.3`, etc. — so the environment is bit-reproducible.
 
 ---
 
-## Section 12 — Advanced / MNC Questions
+## Section 13 — Advanced / MNC Questions
 
-**Q35. How would you scale this to real-time streaming?**
-> *(Fill in — Kafka producer for transactions, Redis consumer updating features in real-time, Lambda Architecture: batch Airflow + streaming Kafka)*
+**Q40. How would you scale this to real-time streaming?**
+> Add Kafka as the event bus: each transaction triggers a Kafka event → consumer updates Redis feature store in real-time instead of waiting for the nightly Airflow batch. The model serving layer (FastAPI) stays identical — it reads from Redis regardless of whether features came from batch or stream. This is the Lambda Architecture pattern: batch pipeline handles historical correctness, streaming handles recency. The churn model would benefit most — detecting a customer who just stopped buying patterns in real-time vs 24 hours later.
 
-**Q36. How would you add a new ML model without redeploying the entire stack?**
-> *(Key answer: add model file to artifacts/, update FastAPI loaders dict, rolling restart of FastAPI container — zero downtime)*
+**Q41. How would you add a new ML model without redeploying the entire stack?**
+> The FastAPI lifespan loads models from `artifacts/models/` at startup using a loaders dict. To add a new model: (1) Train it, save the artifact. (2) Add a loader function in `src/models/`. (3) Add the entry to the loaders dict in `api/main.py`. (4) Add the endpoint in `api/routers/predictions.py`. (5) Rolling restart of the FastAPI container — zero downtime since the old container handles requests until the new one is healthy. No other services need touching.
 
-**Q37. What would you do differently with 6 more months?**
-> *(Fill in — A/B testing framework, streaming pipeline, AutoML for model selection, multi-region PostgreSQL)*
+**Q42. What would you do differently with 6 more months?**
+> Three things: (1) **A/B testing framework** — currently one churn model serves everyone. I'd add a feature flag system so 20% of traffic gets the challenger model and 80% gets the champion, with automatic promotion if challenger ROC-AUC > champion for 2 weeks. (2) **Real-time feature streaming** — replace the daily Airflow batch for feature computation with Kafka + Redis streams, reducing feature staleness from 24 hours to seconds. (3) **Model explainability dashboard** — SHAP values are computed per request, but surfacing them in a Streamlit admin panel with customer-level explanations would make the system genuinely useful for the retention team, not just the data science team.
 
 ---
 
@@ -263,23 +304,36 @@ ORDER BY 1, monthly_revenue DESC;
 
 ---
 
-## Metrics to Memorize (fill in after training runs)
+## Metrics to Memorize
 
 | Fact | Value |
 |---|---|
 | Dataset years | 2015–2025 (11 years) |
-| Total transactions | 1,119,886 rows |
-| Unique customers | 354,815 |
+| Raw transactions | 1,127,609 rows |
+| After cleaning | 1,122,000 rows (5,609 duplicates removed) |
+| Unique customers | ~354,000 |
 | Unique products | 2,004 |
-| Subcategories | *[check df.subcategory.nunique()]* |
-| ML models | 5 (churn, forecast, pricing, recommendation, anomaly) |
+| Subcategories | 6 (Smartphones, Laptops, Tablets, Smart Watch, Audio, TV & Entertainment) |
+| Star schema tables | 4 (fact_transactions, dim_customers, dim_products, dim_time) |
+| Pandera validation rules | 7 (on fact_transactions) |
+| ML models | 5 (churn XGBoost, forecast Prophet, pricing RF, recommendation FP-Growth, anomaly IsolationForest) |
 | FAST_MODE sample | 50,000 rows, 10 Optuna trials, 3-fold CV |
-| Churn threshold | *[fill after PR curve optimization]* |
-| Churn ROC-AUC | *[fill after training]* |
-| Churn F1 | *[fill after training]* |
-| Forecast WMAPE | *[fill after training — per subcategory]* |
+| EDA charts | 21 PNG files in artifacts/charts/ |
+| Smartphones revenue share | 73.2% of total |
+| Top state by revenue | Maharashtra |
+| Prime vs Non-Prime AOV | INR 78K vs INR 62K (+25%) |
+| Festival vs Regular AOV | INR 47K vs INR 78K (festival LOWER — budget buyers) |
+| Top festival by revenue | Back to School (185M INR) |
+| Highest return rate subcategory | Audio (8.1%) |
+| Top 36% products | = 80% of revenue (Pareto) |
+| Optimal discount range | 20-30% (highest revenue) |
+| CLV Mean / Median | INR 74K / INR 47K |
+| Delivery days (avg) | ~3.3-3.5 days (Metro to Rural) |
+| Docker PostgreSQL port | 5433 (5432 occupied by local PostgreSQL) |
 | Docker services | 15 (12 running + 3 init) |
-| GE expectations | 7 (on fact_transactions) |
 | Airflow DAGs | 5 |
 | RANDOM_STATE | 42 |
 | Drift threshold | KS > 0.10 |
+| Churn threshold | *(fill after PR curve optimization — Section 4)* |
+| Churn ROC-AUC | *(fill after training — Section 4)* |
+| Forecast WMAPE | *(fill after training — Section 4, per subcategory)* |
