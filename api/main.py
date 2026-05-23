@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 import config
 from api.models import HealthResponse
@@ -16,12 +21,54 @@ from src.models.churn import load_churn_model
 from src.models.forecasting import load_forecast_model, slug_from_subcategory
 from src.models.pricing import load_pricing_model
 from src.models.recommendation import load_recommendation_model
+from src.monitoring.drift import flush_and_check
+from src.monitoring.metrics import (
+    MODEL_LOADED,
+    PREDICTION_LATENCY_SECONDS,
+    PREDICTION_REQUEST_COUNTER,
+)
 
 # Make src/ module logs visible alongside uvicorn logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Prometheus request tracking middleware
+# Regex captures model name from URL: /predict/<model_name>/...
+# MODEL_NAMES uses "recommend" (not "recommendation") — matches endpoint path and label values
+# ---------------------------------------------------------------------------
+_PREDICT_RE = re.compile(r"/predict/(churn|forecast|pricing|recommend|anomaly)")
+
+
+class _PredictionMetricsMiddleware(BaseHTTPMiddleware):
+    """Track latency and request count for every /predict/* endpoint."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):  # type: ignore[override]
+        m = _PREDICT_RE.search(request.url.path)
+        if not m:
+            return await call_next(request)
+
+        model_name = m.group(1)   # "recommend", not "recommendation"
+        t0 = time.perf_counter()
+        status = "success"
+        try:
+            response = await call_next(request)
+            if response.status_code >= 400:
+                status = "error"
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            elapsed = time.perf_counter() - t0
+            PREDICTION_REQUEST_COUNTER.labels(model_name=model_name, status=status).inc()
+            PREDICTION_LATENCY_SECONDS.labels(model_name=model_name).observe(elapsed)
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Lifespan: load all models, then set MODEL_LOADED Prometheus gauges
+# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     models: dict = {}
@@ -80,16 +127,29 @@ async def lifespan(app: FastAPI):
         logger.warning("anomaly model not loaded: %s", e)
 
     app.state.models = models
+
+    # Set MODEL_LOADED gauges — label "recommend" matches regex capture and MODEL_NAMES constant
+    MODEL_LOADED.labels(model_name="churn").set(1 if models.get("churn") is not None else 0)
+    MODEL_LOADED.labels(model_name="forecast").set(1 if len(models.get("forecast", {})) > 0 else 0)
+    MODEL_LOADED.labels(model_name="pricing").set(1 if models.get("pricing") is not None else 0)
+    MODEL_LOADED.labels(model_name="recommend").set(1 if models.get("recommendation") is not None else 0)
+    MODEL_LOADED.labels(model_name="anomaly").set(1 if models.get("anomaly") is not None else 0)
+
     yield
     # shutdown: in-memory objects — nothing to release
 
 
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="Amazon India Sales Analytics API",
     description="ML inference: churn, forecast, pricing, recommendation, anomaly",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.add_middleware(_PredictionMetricsMiddleware)
 
 app.include_router(churn.router,          prefix="/predict")
 app.include_router(forecast.router,       prefix="/predict")
@@ -98,6 +158,9 @@ app.include_router(recommendation.router, prefix="/predict")
 app.include_router(anomaly.router,        prefix="/predict")
 
 
+# ---------------------------------------------------------------------------
+# Ops endpoints
+# ---------------------------------------------------------------------------
 @app.get("/health", response_model=HealthResponse, tags=["ops"])
 def health(request: Request):
     m = request.app.state.models
@@ -118,3 +181,22 @@ def health(request: Request):
 def metrics():
     # MUST return text/plain — Prometheus scraper cannot parse JSON
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/monitor/drift/run", tags=["ops"])
+def trigger_drift_check() -> dict[str, Any]:
+    """
+    Drain the prediction feature buffer and run Evidently drift detection.
+    Returns {} if buffer is empty or baseline_churn_proba.json is missing (pre-training).
+    Prometheus gauges (DRIFT_KS_STATISTIC etc.) are updated as a side effect.
+    """
+    result = flush_and_check()
+    if not result:
+        return {"status": "skipped", "reason": "buffer_empty_or_no_baseline"}
+    top: dict = result.get("metrics", [{}])[0].get("result", {})
+    return {
+        "status": "ok",
+        "columns_checked": top.get("number_of_columns", 0),
+        "columns_drifted": top.get("number_of_drifted_columns", 0),
+        "dataset_drift":   top.get("dataset_drift", False),
+    }

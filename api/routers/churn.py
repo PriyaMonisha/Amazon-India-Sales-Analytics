@@ -8,6 +8,9 @@ from fastapi import APIRouter, HTTPException, Request
 
 from api.models import ChurnExplainResponse, ChurnResponse, ShapContribution
 from src.features.feature_store import get_online_features
+from src.models.churn import NUMERIC_FEATURES          # confirmed at churn.py:46
+from src.monitoring.drift import maybe_run_drift_check, record_churn_features
+from src.monitoring.metrics import CHURN_PROBABILITY_HISTOGRAM
 
 router = APIRouter(tags=["churn"])
 logger = logging.getLogger(__name__)
@@ -60,6 +63,15 @@ def predict_churn(customer_id: str, request: Request):
     df = _get_churn_features(customer_id)
     prob, _ = _encode_and_predict(df, bundle)
     threshold = bundle["threshold"]
+
+    # Monitoring — non-fatal: must never break inference
+    try:
+        CHURN_PROBABILITY_HISTOGRAM.observe(prob)
+        numeric_row = {col: float(df[col].iloc[0]) for col in NUMERIC_FEATURES if col in df.columns}
+        record_churn_features(numeric_row)
+        maybe_run_drift_check()   # thread-safe; auto-fires when buffer >= 100
+    except Exception as e:
+        logger.warning("monitoring error (non-fatal): %s", e)
 
     return ChurnResponse(
         customer_id=customer_id,
