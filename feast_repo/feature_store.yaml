@@ -1,0 +1,14 @@
+project: amazon_india_sales
+registry: ../data/feast_registry.db        # relative to feast_repo/ → project_root/data/
+
+provider: local
+
+online_store:
+  type: redis
+  connection_string: "${REDIS_CONNECTION_STRING:-localhost:6379}"
+  # Default prevents feast apply ConnectionError before get_feature_store() sets the env var
+
+offline_store:
+  type: file                             # Parquet from compute.py
+
+entity_key_serialization_version: 2
