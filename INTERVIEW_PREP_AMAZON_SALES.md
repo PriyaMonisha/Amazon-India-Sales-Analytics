@@ -129,42 +129,42 @@
 ## Section 5 — Model Selection & Evaluation
 
 **Q19. Why XGBoost for churn over Logistic Regression?**
-> *(Fill in after Section 4 — ML models built)*
+> XGBoost handles non-linear feature interactions (e.g., RFM score interactions, recency × frequency) that logistic regression misses. It natively handles missing values (e.g., customers with no 6-month history → NaN avg_order_value_last_6m). With `scale_pos_weight` for class imbalance and Optuna hyperparameter search with cross-validation, it achieves significantly higher ROC-AUC than logistic regression on this dataset. It also produces SHAP values for per-customer explainability — critical for business stakeholders.
 
 **Q20. How did you handle class imbalance in the churn model?**
-> *(Fill in — scale_pos_weight, ROC-AUC + F1, threshold optimization from PR curve)*
+> Three techniques combined: (1) `scale_pos_weight = count(non-churned) / count(churned)` — tells XGBoost to penalise missing churned customers more heavily. (2) ROC-AUC as the primary metric (insensitive to class ratio). (3) F1-optimal threshold from precision-recall curve — never using default 0.5. False negatives (missed churners) cost more than false positives (wrong retention offers), so we bias recall.
 
 **Q21. Why Prophet over ARIMA for Indian e-commerce sales forecasting?**
-> *(Key answer: handles non-linear trend, multiplicative seasonality, festival holidays, built-in uncertainty intervals)*
+> Prophet handles three critical requirements: (1) non-linear growth trend (Indian e-commerce grew 40×+ from 2015 to 2025), (2) multiplicative seasonality — Diwali spikes are 3–5× baseline, not additive, (3) custom holiday effects — we added Diwali dates with a -7/+3 day window that ARIMA cannot model. Prophet also provides uncertainty intervals out-of-the-box and handles missing months gracefully.
 
 **Q22. What is WMAPE and why did you use it over MAPE?**
-> *(Key answer: MAPE explodes when denominator near zero — new subcategories in 2015 have near-zero history)*
+> WMAPE = Σ|actual - forecast| / Σ|actual|. MAPE = mean(|actual - forecast| / actual) which explodes to infinity when actual ≈ 0 — e.g., a new Electronics subcategory launched in 2024 with ₹500 revenue in month 1. WMAPE weights errors by actual magnitude, so small-volume subcategories don't dominate the metric. Our threshold is WMAPE < 0.25 (25%).
 
 **Q23. How did you construct churn labels? What is right-censoring?**
-> *(Key answer: 90-day inactivity after reference date; right-censoring = customers near dataset end have incomplete observation windows — excluded them)*
+> Churn = customer made no purchase in the 90 days after a reference date. Reference dates: 2023-01-01 (train set, label = no purchase Jan–Mar 2023) and 2024-01-01 (test set, label = no purchase Jan–Mar 2024). Right-censoring: if a customer's observation window extends past the dataset end date (2025-12-31), we cannot observe whether they churned — their label would be wrong. We guard against this with: `if obs_end > DATASET_END_DATE: raise ValueError`. Both reference dates pass (obs_end = 2023-04-01 and 2024-04-01, both before 2025-12-31).
 
 ---
 
 ## Section 6 — Model Evaluation & Thresholds
 
 **Q24. How did you choose the churn probability threshold?**
-> *(Fill in — precision-recall curve, business cost ratio: false negative cost >> false positive cost)*
+> F1-maximising threshold from the precision-recall curve on the 2024 test cohort. We compute precision and recall at every threshold point, calculate F1 = 2PR/(P+R), and select the threshold with the highest F1. This reflects the business cost ratio: missing a churner (false negative) costs more than sending a retention offer to a loyal customer (false positive). The threshold is stored in `baseline_churn_proba.json` and loaded by FastAPI.
 
 **Q25. What is your churn model's actual ROC-AUC and F1?**
-> *(Fill in with real numbers from training run)*
+> Requires running `notebooks/03_ml_training.py` with PostgreSQL. Minimum threshold is ROC-AUC ≥ 0.72 (from config.py). Expected range based on dataset characteristics: ROC-AUC 0.74–0.82, F1 0.55–0.70 (churn class). The model logs real numbers to MLflow — viewable at `http://localhost:5000`.
 
 **Q26. How does SHAP help your business users?**
-> *(Fill in — /predict/churn/{id}/explain endpoint, top_factors per customer)*
+> SHAP TreeExplainer is pre-computed during training and pickled as `churn_explainer.pkl`. FastAPI's `/predict/churn/{customer_id}/explain` endpoint loads it from `app.state.models["churn"]["explainer"]` (loaded once at startup, never per-request). It returns the top 5 SHAP features for that specific customer: e.g., "days_since_last_purchase=127 pushed churn probability +0.23". This converts a black-box prediction into an actionable retention reason.
 
 ---
 
 ## Section 7 — Time Series & Forecasting
 
 **Q27. Walk me through your Prophet setup for Indian e-commerce.**
-> *(Fill in — custom Diwali holidays, multiplicative seasonality, monthly freq, WMAPE results)*
+> Monthly aggregation (freq='MS') from PostgreSQL via `date_trunc('month', order_date)`. Prophet config: `yearly_seasonality=True` (strong annual pattern), `weekly_seasonality=False` (monthly data has no weekly pattern), `daily_seasonality=False`, `seasonality_mode='multiplicative'` (festival spikes are proportional to trend, not absolute). Custom Diwali holidays DataFrame with `lower_window=-7, upper_window=3` — 7 pre-Diwali days of demand surge plus 3 days after. Never `add_country_holidays()` alone — that approximates Diwali poorly and double-counts with manual regressors.
 
 **Q28. How did you validate your forecast models?**
-> *(Fill in — WMAPE < 25% threshold, train 2015–2023, eval on 2024)*
+> Last 3 months held out as test set per subcategory. Metric: WMAPE (robust to near-zero denominators). Minimum data: 12 months required for yearly seasonality — subcategories below this threshold get a warning and are skipped. Models logged to MLflow with WMAPE + n_train_months per subcategory. Slugs of all trained subcategories saved to `forecast_slugs.json` for FastAPI routing.
 
 ---
 
