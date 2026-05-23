@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import json
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+import config
+from api.models import HealthResponse
+from api.routers import anomaly, churn, forecast, pricing, recommendation
+from src.models.anomaly import load_anomaly_model
+from src.models.churn import load_churn_model
+from src.models.forecasting import load_forecast_model, slug_from_subcategory
+from src.models.pricing import load_pricing_model
+from src.models.recommendation import load_recommendation_model
+
+# Make src/ module logs visible alongside uvicorn logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    models: dict = {}
+
+    # --- Churn ---
+    try:
+        models["churn"] = load_churn_model()
+        logger.info("churn model loaded")
+    except Exception as e:
+        models["churn"] = None
+        logger.warning("churn model not loaded: %s", e)
+
+    # --- Forecast: load each Prophet model keyed by slug ---
+    # config.ARTIFACTS_DIR is pathlib.WindowsPath — / operator works directly
+    slugs_path = config.ARTIFACTS_DIR / "models" / "forecast_slugs.json"
+    forecast_models: dict = {}
+    try:
+        if slugs_path.exists():
+            subcats: list[str] = json.loads(slugs_path.read_text())["slugs"]
+            for subcat in subcats:
+                slug = slug_from_subcategory(subcat)
+                # load_forecast_model takes the ORIGINAL subcategory name, returns Prophet object
+                forecast_models[slug] = load_forecast_model(subcat)
+            logger.info("forecast models loaded: %d subcategories", len(forecast_models))
+        else:
+            logger.warning("forecast_slugs.json not found — no Prophet models loaded")
+    except Exception as e:
+        logger.warning("forecast models not loaded: %s", e)
+    models["forecast"] = forecast_models   # always a dict; may be empty {}
+
+    # --- Pricing ---
+    # Note: predict_optimal_price() also calls load_pricing_model() internally per request.
+    # This preload serves as: (1) startup health signal, (2) fail-fast if file missing.
+    try:
+        models["pricing"] = load_pricing_model()
+        logger.info("pricing model loaded")
+    except Exception as e:
+        models["pricing"] = None
+        logger.warning("pricing model not loaded: %s", e)
+
+    # --- Recommendation ---
+    try:
+        rules_df, fallback = load_recommendation_model()
+        models["recommendation"] = {"rules": rules_df, "fallback": fallback}
+        logger.info("recommendation model loaded")
+    except Exception as e:
+        models["recommendation"] = None
+        logger.warning("recommendation model not loaded: %s", e)
+
+    # --- Anomaly ---
+    try:
+        models["anomaly"] = load_anomaly_model()
+        logger.info("anomaly model loaded")
+    except Exception as e:
+        models["anomaly"] = None
+        logger.warning("anomaly model not loaded: %s", e)
+
+    app.state.models = models
+    yield
+    # shutdown: in-memory objects — nothing to release
+
+
+app = FastAPI(
+    title="Amazon India Sales Analytics API",
+    description="ML inference: churn, forecast, pricing, recommendation, anomaly",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.include_router(churn.router,          prefix="/predict")
+app.include_router(forecast.router,       prefix="/predict")
+app.include_router(pricing.router,        prefix="/predict")
+app.include_router(recommendation.router, prefix="/predict")
+app.include_router(anomaly.router,        prefix="/predict")
+
+
+@app.get("/health", response_model=HealthResponse, tags=["ops"])
+def health(request: Request):
+    m = request.app.state.models
+    # forecast is always a dict (never None) — use len() > 0 to check real load status
+    return HealthResponse(
+        status="ok",
+        models_loaded={
+            "churn":          m.get("churn") is not None,
+            "forecast":       len(m.get("forecast", {})) > 0,
+            "pricing":        m.get("pricing") is not None,
+            "recommendation": m.get("recommendation") is not None,
+            "anomaly":        m.get("anomaly") is not None,
+        },
+    )
+
+
+@app.get("/metrics", tags=["ops"])
+def metrics():
+    # MUST return text/plain — Prometheus scraper cannot parse JSON
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
