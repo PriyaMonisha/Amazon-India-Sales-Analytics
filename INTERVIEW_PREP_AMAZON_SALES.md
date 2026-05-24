@@ -365,3 +365,28 @@ ORDER BY 1, monthly_revenue DESC;
 
 **Q50.** What makes the anomaly page interactive?
 > User enters transaction details (final amount, MRP, delivery days, return flag) → POST `/predict/anomaly` → response includes `is_anomaly` flag and `anomaly_score` (IsolationForest decision function). We render a gauge chart centered at 0 (negative = anomalous), and overlay the user's discount/delivery values on historical distributions from PostgreSQL for context.
+
+---
+
+## Section 9: Airflow Orchestration (Q51–Q57)
+
+**Q51.** Why use Airflow instead of a simple cron job?
+> Cron gives you scheduling but nothing else — no retry logic, no dependency management, no UI for monitoring, no XCom for passing data between steps. Airflow gives us DAG visualization, per-task retries with configurable delay, TriggerDagRunOperator for cross-DAG chaining, and a searchable log history. For a pipeline with 4 chained stages (ETL→features→training→serving check), Airflow's dependency graph makes failures immediately diagnosable.
+
+**Q52.** How do you chain 4 DAGs so they run sequentially?
+> Using TriggerDagRunOperator with `wait_for_completion=False`. The final task of each DAG triggers the next DAG ID. We use `wait_for_completion=False` because the triggered DAG runs in a separate DagRun — waiting would block the triggering DAG's executor slot. The chain is: `etl_pipeline` → `feature_engineering` → `model_training` → `model_serving_check`. `drift_monitoring` runs independently on `@daily`.
+
+**Q53.** Why not put all logic in one DAG instead of four?
+> Separation of concerns and independent restartability. If feature engineering fails, we can restart just that DAG without re-running ETL. If model training fails, we can retrain without re-extracting. Each DAG can also be triggered independently for ad-hoc runs. Four small DAGs are also easier to monitor in the Airflow UI than one DAG with 15 tasks.
+
+**Q54.** Why are all `src.*` imports inside task functions, not at module level?
+> DAG module code runs in the Airflow scheduler process when it parses DAGs. Task callables run in worker processes. If we import `from src.models.churn import train_churn_model` at module level, the scheduler process needs all ML dependencies installed — including XGBoost, Prophet, SHAP. By moving imports inside callables, the scheduler only needs `airflow` installed; workers get the heavy imports. It also ensures `sys.path.insert` from `utils.py` fires before any `src.*` import.
+
+**Q55.** How do you pass data between tasks without bloating the metadata DB?
+> XCom stores values in Airflow's metadata database — fine for small strings, terrible for DataFrames. We store intermediate data as Parquet files in `PROCESSED_DATA_DIR` and push only the file path string via XCom. For example: `extract` saves `airflow_raw_sales.parquet`, pushes `"raw_sales_path"` → `transform` pulls the path with explicit `task_ids="extract"` and reads the Parquet. This keeps XCom lightweight and keeps large data in the filesystem.
+
+**Q56.** Why does the drift DAG call FastAPI instead of running Evidently directly?
+> The Airflow worker is a separate process from FastAPI. If we call `compute_churn_drift()` directly in the Airflow worker, Evidently updates the Prometheus gauges in the worker's process-local registry — a registry that Prometheus never scrapes. The Prometheus scraper only talks to FastAPI's `/metrics` endpoint. By calling `POST /monitor/drift/run` via HTTP, FastAPI's own process updates its own registry, and the drift scores appear in Grafana as expected.
+
+**Q57.** After model training, why doesn't the serving check see the new models?
+> FastAPI loads models at startup via the lifespan hook (`@asynccontextmanager`). When training writes new artifact files, the FastAPI container still has the old models in memory — it doesn't watch the filesystem for changes. The serving check is therefore only valid after `docker compose restart fastapi`. In production, you'd add a `/admin/reload` endpoint that re-runs the lifespan loading logic, or use a model registry (MLflow Model Registry, BentoML) that pushes change notifications to the serving layer.
