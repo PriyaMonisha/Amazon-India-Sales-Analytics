@@ -343,3 +343,25 @@ ORDER BY 1, monthly_revenue DESC;
 | Churn threshold | *(fill after PR curve optimization — Section 4)* |
 | Churn ROC-AUC | *(fill after training — Section 4)* |
 | Forecast WMAPE | *(fill after training — Section 4, per subcategory)* |
+
+---
+
+## Section 8: Streamlit Dashboard (Q45–Q50)
+
+**Q45.** Why Streamlit for the analytics dashboard?
+> Streamlit lets data scientists build interactive dashboards in pure Python — no frontend skills needed. We use Plotly for charts (interactive), SQLAlchemy for DB queries, and `requests` to call FastAPI. `@st.cache_data(ttl=300)` prevents hammering PostgreSQL on every rerender.
+
+**Q46.** How does the Streamlit app interact with ML models?
+> It never loads models directly. Instead it calls FastAPI endpoints (`/predict/churn/{id}`, `/predict/forecast/{subcat}`, etc.) via HTTP. This separates concerns: Streamlit handles UI, FastAPI handles inference. Both run as separate Docker services.
+
+**Q47.** What does the churn page show when models aren't trained?
+> Graceful degradation — it shows a `st.info()` message "Train models first" for charts that need `baseline_churn_proba.json`. The live predictor form still renders but returns a 503 error with a clear message. PostgreSQL-based charts (customer tier distribution, MAU trend) still load.
+
+**Q48.** How does the demand forecast page work?
+> User selects a subcategory → Streamlit calls `GET /predict/forecast/{subcat}?periods=6` → FastAPI returns 6 months of Prophet predictions with 95% confidence intervals. We render a line chart with a shaded CI band using Plotly. Historical sales come from PostgreSQL for context.
+
+**Q49.** How does the pricing analytics page demonstrate price elasticity?
+> User inputs a subcategory + current price → calls `GET /predict/pricing/{subcat}?current_price=X` → FastAPI returns 5 scenarios (−20%, −10%, 0%, +10%, +20%). We render: (1) revenue bar chart, (2) demand line chart, (3) bubble chart (price × revenue × demand size), (4) optimal price highlighted in green.
+
+**Q50.** What makes the anomaly page interactive?
+> User enters transaction details (final amount, MRP, delivery days, return flag) → POST `/predict/anomaly` → response includes `is_anomaly` flag and `anomaly_score` (IsolationForest decision function). We render a gauge chart centered at 0 (negative = anomalous), and overlay the user's discount/delivery values on historical distributions from PostgreSQL for context.
