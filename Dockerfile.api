@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# libgomp1: XGBoost OpenMP parallelism — absent on slim → libgomp.so.1 ImportError at startup
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user — files created by container (drift reports) won't be owned by root on host
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
+
+WORKDIR /app
+
+# Copy requirements before source code — pip layer only rebuilds on requirements change
+COPY requirements/base.txt requirements/base.txt
+COPY requirements/api.txt  requirements/api.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements/api.txt
+
+# Copy application code
+COPY api/        api/
+COPY src/        src/
+COPY config.py   config.py
+# feast_repo/ and data/feast_registry.db come via volume mount (see docker-compose.yml)
+# Reason: feast_registry.db must stay writable for feast materialize; feast_repo/
+# feature_store.yaml has ${REDIS_CONNECTION_STRING} which resolves at runtime via env var
+
+RUN mkdir -p artifacts/models artifacts/drift artifacts/charts \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# --workers 1: N workers × all Prophet models in memory → OOM (mem_limit: 3g)
+# FastAPI async event loop handles concurrency within 1 worker
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

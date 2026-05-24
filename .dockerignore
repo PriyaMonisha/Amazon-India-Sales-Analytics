@@ -1,0 +1,45 @@
+# Virtual environment (most important — prevents ~2GB venv from entering build context)
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Git
+.git/
+.gitignore
+
+# Notebooks (training code, not runtime code)
+notebooks/
+
+# All data files — large CSVs; feast_registry.db and parquets are volume-mounted, not COPYd
+data/
+
+# Trained model artifacts — volume-mounted from host, not baked into image
+artifacts/
+mlruns/
+
+# Documentation
+*.md
+*.pdf
+EDA_INSIGHTS.md
+INTERVIEW_PREP_AMAZON_SALES.md
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets — never bake into image
+.env
+.env.*
+
+# Tests
+tests/
+
+# Claude memory
+.claude/

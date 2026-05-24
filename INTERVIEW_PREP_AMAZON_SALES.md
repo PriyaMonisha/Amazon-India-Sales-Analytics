@@ -390,3 +390,28 @@ ORDER BY 1, monthly_revenue DESC;
 
 **Q57.** After model training, why doesn't the serving check see the new models?
 > FastAPI loads models at startup via the lifespan hook (`@asynccontextmanager`). When training writes new artifact files, the FastAPI container still has the old models in memory — it doesn't watch the filesystem for changes. The serving check is therefore only valid after `docker compose restart fastapi`. In production, you'd add a `/admin/reload` endpoint that re-runs the lifespan loading logic, or use a model registry (MLflow Model Registry, BentoML) that pushes change notifications to the serving layer.
+
+---
+
+## Section 10: Docker Compose (Q58–Q64)
+
+**Q58.** Why use single-stage instead of multi-stage Dockerfiles?
+> All dependencies — XGBoost 2.0.3, Prophet 1.1.5, scikit-learn 1.5.2 — ship as pre-built wheels on PyPI for Python 3.11 Linux x86_64. `pip install` downloads wheels; no compilation happens. Multi-stage builds are valuable when you compile C extensions from source and want to exclude the compiler toolchain from the final image. Here there's nothing to exclude. `libgomp1` for XGBoost's OpenMP thread pool belongs in the runtime image anyway. Multi-stage would add 20+ lines of Dockerfile complexity for zero image-size benefit.
+
+**Q59.** Why does FastAPI have `mem_limit: 3g` but Streamlit only `1g`?
+> FastAPI loads all Prophet models at startup in a `lifespan` hook. Prophet's in-memory footprint after JSON deserialization is ~150MB per model. With ~20 subcategory models: 20 × 150MB = 3GB for Prophet alone, plus XGBoost churn model (~50MB), IsolationForest (~100MB), and Python/uvicorn overhead (~200MB). Total: ~3.35GB minimum. Using `--workers 1` is critical — N uvicorn workers means N full copies of all models in memory; 2 workers would require 6GB+ and OOMKill the container. FastAPI's async event loop handles concurrency within a single worker. Streamlit calls FastAPI via HTTP and never loads ML libraries directly, so 1g is sufficient.
+
+**Q60.** What is the init container pattern and why use it here?
+> An init container runs to completion (exit 0) before dependent services start. `condition: service_completed_successfully` in `depends_on` blocks downstream services until init exits cleanly. We use it for two idempotent setup tasks: `minio-init` creates MinIO buckets (`mc mb --ignore-existing`), and `airflow-init` runs `airflow db init` and creates the admin user. The alternative — baking setup into the main service entrypoint — re-runs setup on every container restart, causing "user already exists" errors and broken states. Init containers are a clean separation: setup runs once, service runs forever.
+
+**Q61.** What does `start_period` do in health checks, and why is it important?
+> `start_period` is a grace period during which health check failures don't count toward `retries`. Without it, Docker fires the first probe immediately after container start. PostgreSQL takes ~20-30 seconds to finish initializing; FastAPI takes ~60 seconds to load all ML models. Without `start_period`, Docker marks them unhealthy on the first probe and blocks all `condition: service_healthy` dependent services from starting. With `start_period: 30s` on Postgres and `start_period: 60s` on FastAPI, Docker waits before counting failures — allowing legitimate startup time.
+
+**Q62.** When do you use named volumes vs bind mounts?
+> Named volumes (`postgres_data`, `redis_data`, `minio_data`, `grafana_data`) for persistent service state managed by Docker. They survive `docker compose down` and are deleted only with `docker compose down -v`. Bind mounts (`./dags`, `./feast_repo`, `./artifacts/models:ro`) for host-side files that need to be live-editable or produced by local processes. The `:ro` flag on `prometheus.yml` and model artifacts prevents the container from accidentally writing to host files and avoids permission errors on Linux. Never add `-v` to teardown unless intentionally resetting from scratch — it deletes all database data.
+
+**Q63.** Why is `REDIS_CONNECTION_STRING: redis:6379` needed in the FastAPI service environment?
+> `feast_repo/feature_store.yaml` configures the online store connection as `${REDIS_CONNECTION_STRING:-localhost:6379}`. Inside the FastAPI container, `localhost` refers to the container itself, not the Redis service. Docker Compose creates a bridge network where each service name is a DNS hostname — `redis` resolves to the Redis container's IP. Without setting `REDIS_CONNECTION_STRING: redis:6379` in docker-compose.yml, Feast would try to connect to `localhost:6379` inside the container and fail. The env var pattern (with a `:-localhost:6379` default) was already in place from Rule 29 — Docker just needs to override the default.
+
+**Q64.** Why run as a non-root user in both Dockerfiles?
+> Without a non-root user, any file the container writes at runtime — drift reports in `artifacts/drift/`, temporary files — is owned by `root` on the host bind mount. This causes `git status` to show unexpected changes and requires `sudo` for `rm` or `make clean`. The fix is `groupadd -r appuser && useradd -r -g appuser` plus `chown -R appuser:appuser /app` before switching to that user. It also follows the principle of least privilege: a compromised process running as root inside the container has broader escape potential than one running as an unprivileged user.

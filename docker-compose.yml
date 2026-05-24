@@ -115,6 +115,7 @@ services:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
+      REDIS_CONNECTION_STRING: redis:6379
     ports:
       - "8000:8000"
     depends_on:
@@ -122,6 +123,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./artifacts/models:/app/artifacts/models:ro
+      - ./artifacts/drift:/app/artifacts/drift
+      - ./artifacts/charts:/app/artifacts/charts:ro
+      - ./feast_repo:/app/feast_repo:ro
+      - ./data/feast_registry.db:/app/data/feast_registry.db
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -179,7 +186,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./monitoring/grafana/provisioning/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1"]
       interval: 15s
