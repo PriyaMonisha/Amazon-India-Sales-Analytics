@@ -415,3 +415,35 @@ ORDER BY 1, monthly_revenue DESC;
 
 **Q64.** Why run as a non-root user in both Dockerfiles?
 > Without a non-root user, any file the container writes at runtime — drift reports in `artifacts/drift/`, temporary files — is owned by `root` on the host bind mount. This causes `git status` to show unexpected changes and requires `sudo` for `rm` or `make clean`. The fix is `groupadd -r appuser && useradd -r -g appuser` plus `chown -R appuser:appuser /app` before switching to that user. It also follows the principle of least privilege: a compromised process running as root inside the container has broader escape potential than one running as an unprivileged user.
+
+---
+
+## Section 11 — Test Suite (pytest, mocking, fixtures)
+
+**Q65.** Why mock all external services in the test suite instead of testing against real PostgreSQL and Redis?
+
+> Speed and isolation. The full 95-test suite runs in under 90 seconds with mocks; the same suite against real services would need Docker running, database migrations, Feast materialization, and MLflow tracking — that's a 5-10 minute cold-start per run. More importantly, external services introduce flakiness: network failures, stale data, port conflicts. Mocked tests are deterministic by construction. We still have `@pytest.mark.integration` tests for ETL pipeline correctness that run against real PostgreSQL in CI — those test the DB interaction explicitly. The split is: unit/contract tests run everywhere (pytest, IDE, pre-commit), integration tests run in CI only against ephemeral Docker services.
+
+**Q66.** What is the Prometheus duplicate-metric problem, and how does the test suite solve it?
+
+> Metrics register at import time — when `api.main` is first imported, the counters and histograms are registered with the global `REGISTRY`. In IDE test runners (JetBrains, VS Code) the test process often persists across runs without a fresh interpreter. Re-importing `api.main` tries to re-register the same metric names and raises `ValueError: Duplicated timeseries in CollectorRegistry`. The fix is a session-scoped autouse fixture `_isolate_prometheus` that snapshots all registered collectors before the session (`_names_to_collectors.values() | _collectors_without_names`) and unregisters any new ones on teardown. This is a no-op in standard single-run pytest but guards interactive re-runs.
+
+**Q67.** Why is `trained_anomaly_bundle` session-scoped while most other fixtures are function-scoped?
+
+> IsolationForest training takes ~50ms on 100 rows — small but non-trivial when multiplied across 7 tests in `TestDetectAnomalies` plus the API fixtures that depend on `mock_anomaly_bundle`. Session scope trains once per pytest run and reuses the same model+scaler objects across all tests. The risk is shared mutable state, but `detect_anomalies()` is a pure read-only function (never mutates the model), so sharing is safe. Function scope for fixtures like `sample_sales_df` and `mock_pricing_result` prevents in-place mutation bugs — one test modifying a DataFrame or dict would contaminate subsequent tests if they shared the fixture instance.
+
+**Q68.** Why use Starlette `TestClient` instead of `httpx.AsyncClient` for FastAPI tests?
+
+> `TestClient` wraps the ASGI app synchronously using `requests` under the hood — no event loop, no `await`, no `pytest-asyncio` configuration needed. It works because all our FastAPI endpoints are defined as `def` (synchronous), not `async def`. Starlette's ASGI interface handles the event loop internally; the test code stays synchronous. `httpx.AsyncClient` would require `@pytest.mark.asyncio` on every test method and `asyncio_mode = auto` in pytest.ini — significant boilerplate for no benefit when the endpoints don't use async I/O.
+
+**Q69.** What does `raise_server_exceptions=True` vs `False` do, and why does each test client use a different setting?
+
+> `raise_server_exceptions=True` (used in `api_client_all_loaded`): server-side Python exceptions propagate as real exceptions in the test. If a router raises an unhandled `AttributeError`, pytest shows `ERROR` with the full traceback pointing at the bug — the most informative failure mode. `raise_server_exceptions=False` (used in `api_client_no_models`): `HTTPException` is caught and returned as an HTTP response with the appropriate status code. This setting is required for 503-tests — the router intentionally raises `HTTPException(503)` when models are None, and we want to assert `r.status_code == 503` rather than catch a Python exception.
+
+**Q70.** How do you test model loading when no trained artifacts exist on disk?
+
+> `monkeypatch.setattr("src.models.churn.ARTIFACTS_DIR", tmp_path)` redirects the module-level constant to a temp directory that has the directory structure (an empty `models/` subdirectory) but no artifact files. When `load_churn_model()` tries to open `churn_model.json`, it hits `FileNotFoundError` naturally — no artificial exception mocking needed. The monkeypatch is function-scoped and reverses automatically, so subsequent tests see the original `ARTIFACTS_DIR`. The key insight is patching the name in the module's own namespace (`src.models.churn.ARTIFACTS_DIR`) rather than in `config`, because Python binds the name at import time.
+
+**Q71.** What's the difference between unit, integration, and contract tests in this ML pipeline?
+
+> Unit tests (most of the suite) test a single function in isolation: `slug_from_subcategory("Smart TVs") == "smart_tvs"`, `_parse_price("₹1,299") == 1299.0`, `discount_pct` clipping at 0 and 1. Contract tests verify interface agreements between components without testing behavior: `ChurnModelBundle.__annotations__.keys()` matches the 8 expected keys, `len(ALL_FEATURES) == 14`, the `/health` response includes exactly the 5 expected model names. These fail if a team member renames a key or adds a feature without updating the contract. Integration tests (`@pytest.mark.integration`) test multi-component flows with real services — ETL pipeline against PostgreSQL, Feast materialization against Redis. They run in CI only, not on every local pytest run.

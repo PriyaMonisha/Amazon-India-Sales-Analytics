@@ -1,4 +1,6 @@
-.PHONY: setup etl eda train serve monitor all test clean feast-apply feast-materialize
+VENV := venv/Scripts/python.exe
+
+.PHONY: setup etl eda train serve monitor all test test-fast test-cov test-collect test-etl test-api test-models clean feast-apply feast-materialize
 
 # --- Setup ---
 setup:
@@ -41,8 +43,27 @@ all:
 	docker compose up --build
 
 # --- Tests ---
+test-collect:
+	$(VENV) -m pytest tests/ --co -q
+
 test:
-	python -m pytest tests/ -v --tb=short
+	APP_ENV=test $(VENV) -m pytest tests/ -v --tb=short
+
+test-fast:
+	$(VENV) -m pytest tests/ -q -x --tb=line
+
+test-cov:
+	$(VENV) -m pytest tests/ --cov=src --cov=api \
+		--cov-report=term-missing --cov-report=html:htmlcov
+
+test-etl:
+	$(VENV) -m pytest tests/test_etl.py -v
+
+test-api:
+	$(VENV) -m pytest tests/test_api.py -v
+
+test-models:
+	$(VENV) -m pytest tests/test_models.py -v
 
 # --- Cleanup ---
 clean:
