@@ -8,51 +8,29 @@ echo   Amazon India Sales Analytics — Evaluation Launcher
 echo ============================================================
 echo.
 
-REM ── Step 1: Check Docker is running ────────────────────────────
-echo [1/4] Checking Docker Desktop...
-docker info >nul 2>&1
+REM ── Check PostgreSQL is reachable ───────────────────────────────
+echo [1/2] Checking PostgreSQL connection...
+python -c "import psycopg2; psycopg2.connect(dbname='amazon_sales',user='postgres',password='REDACTED',host='localhost',port=5432); print('OK')" 2>nul
 if errorlevel 1 (
     echo.
-    echo  Docker is NOT running.
-    echo  Please open Docker Desktop, wait for the green icon,
-    echo  then run this script again.
+    echo  WARNING: Cannot reach PostgreSQL on localhost:5432
+    echo  The service should auto-start with Windows.
+    echo  If not, open Services (services.msc) and start:
+    echo    postgresql-x64-18
     echo.
     pause
-    exit /b 1
-)
-echo  Docker is running.
-echo.
-
-REM ── Step 2: Start PostgreSQL + Redis ───────────────────────────
-echo [2/4] Starting PostgreSQL + Redis containers...
-docker compose up postgres redis -d
-if errorlevel 1 (
-    echo  Failed to start containers. Check docker-compose.yml.
-    pause
-    exit /b 1
-)
-echo  Containers started.
-echo.
-
-REM ── Step 3: Wait for PostgreSQL to be ready ────────────────────
-echo [3/4] Waiting for PostgreSQL to be ready...
-:wait_loop
-docker exec amazon_postgres pg_isready -U postgres >nul 2>&1
-if errorlevel 1 (
-    timeout /t 2 /nobreak >nul
-    goto wait_loop
 )
 echo  PostgreSQL is ready.
 echo.
 
-REM ── Step 4: Launch Streamlit dashboard ─────────────────────────
-echo [4/4] Launching Streamlit dashboard...
+REM ── Launch Streamlit ────────────────────────────────────────────
+echo [2/2] Launching Streamlit dashboard...
 echo.
-echo  Dashboard will open at: http://localhost:8501
+echo  Dashboard opening at: http://localhost:8501
 echo.
-echo  TO STOP: Close this window, then run stop_dashboard.bat
-echo.
+echo  TO STOP: Press Ctrl+C in this window
 echo ============================================================
 echo.
 
-python -m streamlit run streamlit_app/app.py --server.port 8501 --server.headless false
+cd /d "%~dp0"
+python -m streamlit run streamlit_app/app.py --server.port 8501

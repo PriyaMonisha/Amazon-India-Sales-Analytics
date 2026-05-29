@@ -10,12 +10,12 @@ A production-grade machine learning platform built on a decade of Amazon India e
 
 | Layer | What's Built |
 |-------|-------------|
-| **Data Engineering** | ETL pipeline processing 11 yearly CSVs into a PostgreSQL star schema (1.1M rows, 4 tables) |
+| **Data Engineering** | ETL pipeline processing 11 yearly CSVs into a PostgreSQL star schema (1.1M rows, 4 tables, 10 cleaning challenges) |
 | **Feature Store** | Feast + Redis for online/offline feature serving; 14 customer features; RFM segmentation |
 | **ML Models** | 5 models: churn prediction, demand forecasting, price elasticity, product recommendations, anomaly detection |
 | **API** | FastAPI with 5 prediction endpoints + `/health` + Prometheus `/metrics` |
 | **Monitoring** | Evidently data drift detection, Prometheus metrics, 4 Grafana dashboards |
-| **Dashboard** | Streamlit app with 6 pages and 30 interactive charts |
+| **Dashboard** | Streamlit app with **10 pages and 50+ interactive charts** |
 | **Orchestration** | 5 Airflow DAGs chained via TriggerDagRunOperator |
 | **Infra** | Full Docker Compose stack (15 services) with health checks and volume mounts |
 | **Tests** | 95 pytest tests across ETL, API, and model layers |
@@ -25,42 +25,59 @@ A production-grade machine learning platform built on a decade of Amazon India e
 ## Architecture
 
 ```
-Raw CSVs (11 years)
-      │
-      ▼
- ETL Pipeline ──────────────────────► PostgreSQL (star schema)
- (extract / transform / validate)          │
-                                           │
-                              ┌────────────┴───────────┐
-                              ▼                        ▼
-                      Feature Store             EDA (21 charts)
-                    (Feast + Redis)
-                              │
-                    ┌─────────┴──────────┐
-                    ▼                    ▼
-              Offline Store        Online Store
-             (Parquet files)       (Redis cache)
-                    │
-                    ▼
-            ML Training (5 models)
-         ┌──────┬──────┬──────┬──────┐
-         ▼      ▼      ▼      ▼      ▼
-       Churn  Forecast Price  Reco  Anomaly
-      XGBoost Prophet  XGB  FP-Growth  IsoForest
-         └──────┴──────┴──────┴──────┘
-                    │
-                    ▼
-              FastAPI (5 routers)
-                    │
-          ┌─────────┴──────────┐
-          ▼                    ▼
-    Streamlit Dashboard   Prometheus + Grafana
-     (6 pages, 30 charts)  (4 dashboards, drift alerts)
-                    │
-                    ▼
-            Airflow Orchestration
-          (5 DAGs, weekly ETL → daily drift)
+Raw CSVs (11 years, 1.1M rows)
+         │
+         ▼
+  ETL Pipeline ──────────────────────► PostgreSQL (star schema)
+  (extract / transform / validate)          │
+                                            │
+                               ┌────────────┴───────────┐
+                               ▼                        ▼
+                       Feature Store             EDA (23 charts)
+                     (Feast + Redis)
+                               │
+                     ┌─────────┴──────────┐
+                     ▼                    ▼
+               Offline Store        Online Store
+              (Parquet files)       (Redis cache)
+                     │
+                     ▼
+             ML Training (5 models)
+          ┌──────┬──────┬──────┬──────┐
+          ▼      ▼      ▼      ▼      ▼
+        Churn  Forecast Price  Reco  Anomaly
+       XGBoost Prophet  XGB  FP-Growth  IsoForest
+          └──────┴──────┴──────┴──────┘
+                     │
+                     ▼
+               FastAPI (5 routers)
+                     │
+           ┌─────────┴──────────┐
+           ▼                    ▼
+     Streamlit Dashboard   Prometheus + Grafana
+      (10 pages, 50+ charts) (4 dashboards, drift alerts)
+                     │
+                     ▼
+             Airflow Orchestration
+           (5 DAGs, weekly ETL → daily drift)
 ```
+
+---
+
+## Dashboard Pages (10 Pages)
+
+| Page | GUVI Requirements Covered | Key Charts |
+|------|--------------------------|------------|
+| **0 — Executive Dashboard** | Q2, Q3, Q4, Q5, Q30 | KPI alerts, YoY growth, market share, financial performance, BI command centre |
+| **1 — Customer Churn** | Q11, Q14 | XGBoost probability distribution, confusion matrix, SHAP waterfall, live predictor |
+| **2 — Demand Forecast** | Q6, Q18, Q29 | Prophet forecast + CI bands, YoY growth, seasonal heatmap |
+| **3 — Pricing Analytics** | Q10 | Revenue scenarios, demand sensitivity, price-revenue bubble chart |
+| **4 — Recommendations** | Q28 | Association rules, confidence-lift scatter, co-purchase heatmap |
+| **5 — Anomaly Detection** | Q21 | Score gauge, distribution comparisons, live transaction checker |
+| **6 — Festival & Seasonal** | Q9, Q29 | Festival revenue comparison, festival vs regular by year, seasonal pattern, subcategory breakdown |
+| **7 — Prime & Demographics** | Q13, Q15 | Prime KPI cards, category preferences, age group spending, tier spending profile |
+| **8 — Brand & Products** | Q17, Q19, Q20, Q23 | Brand market share, product ratings, new launch performance, return analysis |
+| **9 — Customer Journey** | Q12, Q16 | Purchase frequency, category transitions, CLV by segment, product scorecard |
 
 ---
 
@@ -68,32 +85,27 @@ Raw CSVs (11 years)
 
 ### 1. Customer Churn Prediction
 - **Algorithm:** XGBoost with Optuna hyperparameter tuning
-- **Label:** No purchase in next 90 days (temporal definition, not return status)
+- **Label:** No purchase in next 90 days (temporal definition — not return status)
 - **Split:** Temporal — train on 2015–2023, test on 2024 cohort
 - **Features:** 14 RFM + behavioral features from Feast feature store
 - **Explainability:** SHAP values served per prediction via FastAPI
-- **Artifacts:** model, SHAP explainer, encoder, feature names, threshold
 
 ### 2. Demand Forecasting (Prophet)
 - **Algorithm:** Facebook Prophet per product subcategory
 - **Seasonality:** Multiplicative; custom Diwali/festival regressors
-- **Granularity:** Monthly, per subcategory; 12-month horizon
-- **Serialization:** `model_to_json` (not pickle — portable across environments)
-- **Metric:** WMAPE (weighted mean absolute percentage error)
+- **Granularity:** Monthly per subcategory; 12-month horizon
+- **Serialization:** `model_to_json` (portable across environments)
 
 ### 3. Price Elasticity
 - **Algorithm:** XGBoost log-log regression (price → demand)
-- **Output:** Elasticity coefficient + revenue-maximizing price per SKU
-- **Bucketing:** Quantile-based with rank fallback for sparse distributions
+- **Output:** Elasticity coefficient + revenue-maximising price per SKU
 
 ### 4. Product Recommendations (FP-Growth)
 - **Algorithm:** mlxtend FP-Growth on order-level baskets
-- **Fallback:** Progressive min_support [0.005 → 0.002 → 0.001] + popularity fallback
-- **Rules:** Filtered by confidence + lift thresholds
+- **Fallback:** Progressive min_support + popularity fallback
 
 ### 5. Anomaly Detection
 - **Algorithm:** IsolationForest on transaction features
-- **Features:** Discount %, delivery days, price tier, payment method
 - **Output:** Anomaly score + binary flag via FastAPI
 
 ---
@@ -101,11 +113,11 @@ Raw CSVs (11 years)
 ## Tech Stack
 
 ```
-Python 3.11        XGBoost 2.0.3      Prophet 1.1.5
+Python 3.11        XGBoost 2.0        Prophet 1.1.5
 scikit-learn 1.5   mlxtend 0.23       Optuna 3.x
 MLflow 2.14        Feast 0.38         Redis 5.0
-FastAPI 0.115      Streamlit 1.37     Evidently 0.4.30
-Airflow 2.8        PostgreSQL 15      Prometheus + Grafana
+FastAPI 0.115      Streamlit 1.35     Evidently 0.4
+Airflow 2.8        PostgreSQL 15/18   Prometheus + Grafana
 Docker Compose     Pandera            SHAP
 ```
 
@@ -114,28 +126,34 @@ Docker Compose     Pandera            SHAP
 ## Project Structure
 
 ```
+├── notebooks/
+│   ├── 01_data_cleaning.py       # 10 cleaning challenges on raw CSVs
+│   ├── 01_data_engineering.py    # ETL → PostgreSQL star schema
+│   ├── 02_eda.py                 # 23 EDA charts saved to artifacts/charts/
+│   └── 03_ml_training.py         # All 5 models + MLflow logging
 ├── src/
-│   ├── etl/              # extract.py, transform.py, load.py
-│   ├── features/         # compute.py (RFM, customer features), feature_store.py
-│   ├── models/           # churn.py, forecasting.py, pricing.py, recommendation.py, anomaly.py
-│   ├── monitoring/       # metrics.py (Prometheus), drift.py (Evidently)
-│   └── validation/       # expectations.py (Pandera, 7 schema checks)
+│   ├── etl/                      # extract.py, transform.py, load.py
+│   ├── features/                 # compute.py (RFM), feature_store.py
+│   ├── models/                   # churn, forecasting, pricing, recommendation, anomaly
+│   ├── monitoring/               # metrics.py (Prometheus), drift.py (Evidently)
+│   └── validation/               # expectations.py (Pandera, 7 schema checks)
 ├── api/
-│   ├── main.py           # FastAPI app with lifespan model loading
-│   ├── models.py         # Pydantic request/response schemas
-│   └── routers/          # churn, forecast, pricing, recommendation, anomaly
+│   ├── main.py                   # FastAPI with lifespan model loading
+│   ├── models.py                 # Pydantic request/response schemas
+│   └── routers/                  # churn, forecast, pricing, recommendation, anomaly
 ├── streamlit_app/
-│   ├── app.py            # Overview page (KPIs, trends, geography)
-│   └── pages/            # 5 feature pages (churn, forecast, pricing, reco, anomaly)
-├── dags/                 # 5 Airflow DAGs (ETL → features → training → serving → drift)
-├── feast_repo/           # Feature views, entities, feature services
-├── monitoring/           # Grafana dashboards, Prometheus config
-├── notebooks/            # 01_data_cleaning.py, 01_data_engineering.py, 02_eda.py, 03_ml_training.py
-├── tests/                # test_etl.py (43), test_api.py (30), test_models.py (22)
-├── requirements/         # base.txt, dev.txt, airflow.txt
+│   ├── app.py                    # Overview page (KPIs, trends, geography)
+│   ├── pages/                    # 9 additional pages (0–9)
+│   └── utils/                    # db.py (queries), api_client.py, offline.py
+├── dags/                         # 5 Airflow DAGs
+├── feast_repo/                   # Feature views, entities, feature services
+├── monitoring/                   # Grafana dashboards, Prometheus config
+├── tests/                        # test_etl.py, test_api.py, test_models.py (95 tests)
+├── requirements/                 # base.txt, dev.txt, airflow.txt
+├── start_dashboard.bat           # One-click launcher (Windows)
 ├── Dockerfile.api
 ├── Dockerfile.streamlit
-└── docker-compose.yml    # 15-service stack
+└── docker-compose.yml            # 15-service full stack
 ```
 
 ---
@@ -144,77 +162,88 @@ Docker Compose     Pandera            SHAP
 
 ### Prerequisites
 - Python 3.11
-- Docker Desktop (for PostgreSQL, Redis, full stack)
-- Git
+- PostgreSQL 15+ running locally (or via Docker)
 
-### 1. Clone & Setup
+### 1. Clone & Install
 
 ```bash
 git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
 cd Amazon-India-Sales-Analytics
-
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
 pip install -r requirements/base.txt
 ```
 
-### 2. Configure Environment
+### 2. Set Up PostgreSQL
 
+**Option A — Native PostgreSQL (recommended, no Docker needed):**
 ```bash
-cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD, REDIS_URL, MLFLOW_TRACKING_URI
+# Create the database
+psql -U postgres -c "CREATE DATABASE amazon_sales;"
+# Connection string used automatically:
+# postgresql+psycopg2://postgres:<your_password>@localhost:5432/amazon_sales
 ```
+Update `config.py` line 20 with your PostgreSQL password.
 
-### 3. Start Infrastructure
-
+**Option B — Docker:**
 ```bash
 docker compose up postgres redis -d
 ```
 
-### 4. Run ETL Pipeline
+### 3. Load Data (one-time, ~15 min)
 
 ```bash
-python notebooks/01_data_engineering.py
+APP_ENV=local python notebooks/01_data_engineering.py
 ```
 
-### 5. Compute Features & Apply Feast
+This loads 1.1M rows into PostgreSQL. Data persists — never needs to run again.
 
+### 4. Launch Dashboard
+
+**Windows (double-click):** `start_dashboard.bat`
+
+**Or manually:**
 ```bash
-python -c "from src.features.compute import compute_customer_features; compute_customer_features()"
-cd feast_repo && feast apply && cd ..
-python -c "from src.features.feature_store import materialize_features; materialize_features()"
+python -m streamlit run streamlit_app/app.py
 ```
 
-### 6. Train Models
+Dashboard opens at **http://localhost:8501**
 
-```bash
-# Requires Docker (PostgreSQL must be running)
-python notebooks/03_ml_training.py
-```
+---
 
-### 7. Start FastAPI
+## Offline Mode
 
-```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 1
-```
+The dashboard works without PostgreSQL — every page shows relevant pre-generated EDA chart images as fallback, with a clear banner explaining how to start the database.
 
-### 8. Launch Dashboard
+---
 
-```bash
-streamlit run streamlit_app/app.py
-```
+## EDA Visualisations (23 Charts)
 
-### Full Stack (Docker Compose)
+All charts generated by `notebooks/02_eda.py` and saved to `artifacts/charts/`:
 
-```bash
-docker compose up
-```
-
-Services: PostgreSQL · Redis · FastAPI (port 8000) · Streamlit (port 8501) · Airflow (port 8080) · Prometheus (port 9090) · Grafana (port 3000)
+| # | Chart | GUVI Question |
+|---|-------|--------------|
+| 01 | Revenue Trend 2015–2025 | Q1 |
+| 02 | Seasonal Monthly Heatmap | Q2 |
+| 03 | RFM Customer Segments | Q3 |
+| 04 | Payment Method Evolution | Q4 |
+| 05 | Subcategory Performance | Q5 |
+| 06 | Prime Membership Impact | Q6 |
+| 07 | Geographic & Tier Analysis | Q7 |
+| 08 | Festival Sales Impact | Q8 |
+| 09 | Customer Tier Behaviour | Q9 |
+| 10 | Age Group Preferences | Q9 |
+| 11 | Price vs Demand | Q10 |
+| 12 | Brand Performance | Q13 |
+| 13 | Return Rate Analysis | Q12 |
+| 14 | Cohort Retention | Q14 |
+| 15 | CLV Distribution | Q14 |
+| 16 | Delivery Performance | Q11 |
+| 17 | Discount Effectiveness | Q15 |
+| 18 | Product Rating by Subcategory | Q16 |
+| 19 | Pareto Revenue Concentration | Q20 |
+| 20 | YoY Subcategory Growth | Q20 |
+| 21 | Customer Journey & Transitions | Q17 |
+| 22 | Product Lifecycle Analysis | Q18 |
+| 23 | Competitive Pricing | Q19 |
 
 ---
 
@@ -233,19 +262,6 @@ Services: PostgreSQL · Redis · FastAPI (port 8000) · Streamlit (port 8501) ·
 
 ---
 
-## Dashboard Pages
-
-| Page | Key Visuals |
-|------|-------------|
-| **Overview** | Revenue trend (11yr), top subcategories, state heatmap, payment method evolution |
-| **Customer Churn** | Score distribution, confusion matrix, SHAP waterfall, live predictor |
-| **Demand Forecast** | Prophet forecast + CI bands, YoY growth, seasonal heatmap |
-| **Pricing Analytics** | Revenue scenarios, demand sensitivity, price-revenue bubble chart |
-| **Recommendations** | Association rules, confidence-lift scatter, co-purchase heatmap |
-| **Anomaly Detection** | Score gauge, distribution comparisons, live transaction checker |
-
----
-
 ## Tests
 
 ```bash
@@ -259,13 +275,12 @@ pytest tests/ -v
 ## Key Design Decisions
 
 - **Churn label:** 90-day inactivity (not return_status) with right-censoring guard
-- **Temporal split:** Train 2015–2023, test 2024 cohort — never random split for time-series
-- **RFM scoring:** `rank(pct=True)` + `pd.cut` — avoids "bin edges must be unique" error on skewed e-commerce data
+- **Temporal split:** Train 2015–2023, test 2024 — never random split for time-series
+- **RFM scoring:** `rank(pct=True)` + `pd.cut` — avoids "bin edges must be unique" error on skewed data
 - **Prophet serialization:** `model_to_json` (not pickle) — portable and version-safe
 - **SHAP:** Pre-loaded in FastAPI lifespan once; not per-request
-- **Docker memory:** `--workers 1` for uvicorn — 5 Prophet models × N workers = OOM
 - **Feast:** Two FeatureViews — training inputs vs prediction outputs (never mixed to prevent leakage)
-- **Validation:** Pandera over Great Expectations — avoids Windows MAX_PATH issues with ipywidgets
+- **Validation:** Pandera over Great Expectations — avoids Windows MAX_PATH issues
 
 ---
 
@@ -274,7 +289,7 @@ pytest tests/ -v
 | Dataset | Rows | Period |
 |---------|------|--------|
 | Sales transactions | 1,122,000 | 2015–2025 |
-| Product catalog | ~50,000 SKUs | — |
+| Product catalog | ~2,000 SKUs | — |
 
 Star schema: `fact_transactions` + `dim_customers` + `dim_products` + `dim_time`
 

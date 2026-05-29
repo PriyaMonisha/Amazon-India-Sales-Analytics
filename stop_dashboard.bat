@@ -1,19 +1,8 @@
 @echo off
-title Stopping Dashboard
+title Stop Dashboard
 color 0C
-
 echo.
-echo ============================================================
-echo   Stopping Amazon India Sales Analytics
-echo ============================================================
-echo.
-
-echo Stopping containers (data is preserved)...
-docker compose down
-echo.
-echo Done. You can now close Docker Desktop to free RAM.
-echo.
-echo NOTE: Your data is safe. Next time just run start_dashboard.bat
-echo ============================================================
+echo Press Ctrl+C in the Streamlit terminal window to stop the dashboard.
+echo PostgreSQL keeps running (it is a Windows service — this is fine).
 echo.
 pause
