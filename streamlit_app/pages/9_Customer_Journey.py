@@ -55,7 +55,7 @@ if not freq_df.empty:
         st.info("**Strategy:** Target one-time buyers with personalised re-engagement within 30 days "
                 "to increase repeat purchase rate.")
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
 
 # ---------------------------------------------------------------------------
 # Chart 2 — Category Transition Heatmap

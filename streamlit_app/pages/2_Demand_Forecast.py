@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from streamlit_app.utils import api_client, db
+from streamlit_app.utils import api_client, db, offline
 
 st.set_page_config(page_title="Demand Forecast", page_icon="📈", layout="wide")
 st.title("📈 Demand Forecasting")
@@ -17,7 +17,7 @@ sub_df = db.get_subcategory_list()
 subcategories = sub_df["subcategory"].tolist() if not sub_df.empty else []
 
 if not subcategories:
-    st.error("PostgreSQL unavailable — start Docker and run the ETL pipeline.")
+    offline.show_offline("forecast")
     st.stop()
 
 col_sel, col_periods = st.columns([3, 1])

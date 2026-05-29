@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from streamlit_app.utils import api_client, db
+from streamlit_app.utils import api_client, db, offline
 
 st.set_page_config(
     page_title="Amazon India Sales Analytics",
@@ -47,7 +47,7 @@ if not kpi_df.empty:
     c3.metric("Unique Customers", f"{int(row['unique_customers']):,}")
     c4.metric("Avg Order Value", f"₹{row['avg_order_value']:,.0f}")
 else:
-    st.error("PostgreSQL unavailable — start Docker and run the ETL pipeline first.")
+    offline.show_offline("overview")
     st.stop()
 
 # ---------------------------------------------------------------------------

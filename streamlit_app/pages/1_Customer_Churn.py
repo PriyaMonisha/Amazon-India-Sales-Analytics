@@ -149,7 +149,7 @@ if not tier_df.empty:
             fig2.update_layout(height=320, margin=dict(t=30, b=10))
             st.plotly_chart(fig2, use_container_width=True)
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
 
 # ---------------------------------------------------------------------------
 # Chart 5 — Live Churn Predictor

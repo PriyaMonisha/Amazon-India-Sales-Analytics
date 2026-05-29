@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from streamlit_app.utils import api_client, db
+from streamlit_app.utils import api_client, db, offline
 
 st.set_page_config(page_title="Recommendations", page_icon="🛒", layout="wide")
 st.title("🛒 Product Recommendations")
@@ -17,7 +17,7 @@ sub_df = db.get_subcategory_list()
 subcategories = sub_df["subcategory"].tolist() if not sub_df.empty else []
 
 if not subcategories:
-    st.error("PostgreSQL unavailable.")
+    offline.show_offline("recommendations")
     st.stop()
 
 col_l, col_r = st.columns([3, 1])
@@ -176,4 +176,4 @@ if not pop_df.empty:
     )
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")

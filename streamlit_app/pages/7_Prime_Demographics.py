@@ -47,7 +47,7 @@ if not prime_df.empty:
     fig.update_layout(height=300, margin=dict(t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
 
 # ---------------------------------------------------------------------------
 # Chart 2 — Prime Category Preferences

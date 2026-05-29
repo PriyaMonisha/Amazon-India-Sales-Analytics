@@ -54,7 +54,7 @@ if not brand_df.empty:
         display.columns = ["Brand","Revenue","Orders","Avg Rating","Avg Discount","Products"]
         st.dataframe(display.reset_index(drop=True), use_container_width=True)
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
 
 # ---------------------------------------------------------------------------
 # Chart 2 — Product Ratings Deep Dive

@@ -134,7 +134,7 @@ if not sample_df.empty:
         st.plotly_chart(fig2, use_container_width=True)
 
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
 
 # ---------------------------------------------------------------------------
 # Chart 5 — Transaction Summary Statistics
@@ -192,4 +192,4 @@ if row is not None:
     st.plotly_chart(fig, use_container_width=True)
     st.caption(f"Based on {int(row['total_transactions']):,} transactions.")
 else:
-    st.error("PostgreSQL unavailable.")
+    st.info("🔌 PostgreSQL offline — start Docker to view live charts.")
