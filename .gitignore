@@ -38,3 +38,7 @@ feast_repo/__pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# AI assistant config (internal development tooling — not for repo)
+.claude/
+CLAUDE.md
