@@ -4,6 +4,9 @@ Covers GUVI Dashboard Q2 (real-time monitor + alerts), Q3 (strategic overview),
 Q4 (financial performance), Q5 (growth analytics), Q30 (BI command centre).
 """
 from __future__ import annotations
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import time
 from datetime import datetime
@@ -16,7 +19,8 @@ import streamlit.components.v1 as components
 
 from streamlit_app.utils import db
 
-st.set_page_config(page_title="Executive Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Executive Dashboard", page_icon="📊",
+                   layout="wide", initial_sidebar_state="expanded")
 
 # ---------------------------------------------------------------------------
 # Sidebar — auto-refresh + alert thresholds
@@ -122,15 +126,13 @@ if not yearly_df.empty:
             x=yearly_df["order_year"], y=yearly_df["rev_bn"],
             name="Revenue (INR Bn)", marker_color="#FF9900",
             text=yearly_df["rev_bn"].map("{:.2f}B".format),
-            textposition="outside",
+            textposition="inside", textfont=dict(color="black", size=10),
         ))
         fig.add_trace(go.Scatter(
             x=yearly_df["order_year"], y=yearly_df["yoy_pct"],
             name="YoY Growth %", yaxis="y2",
-            line=dict(color="#232F3E", width=2, dash="dot"),
+            line=dict(color="white", width=2, dash="dot"),
             mode="lines+markers",
-            text=yearly_df["yoy_pct"].map(lambda v: f"{v:+.0f}%" if pd.notna(v) else ""),
-            textposition="top center",
         ))
         fig.update_layout(
             height=360,
@@ -138,7 +140,7 @@ if not yearly_df.empty:
             yaxis2=dict(title="YoY Growth %", overlaying="y", side="right",
                         ticksuffix="%"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            margin=dict(t=30, b=10),
+            margin=dict(t=30, b=10, r=60),
             title="Annual Revenue with YoY Growth Rate",
         )
         st.plotly_chart(fig, use_container_width=True)
@@ -150,7 +152,7 @@ if not yearly_df.empty:
                 x=new_cust_df["cohort_year"], y=new_cust_df["new_customers"],
                 name="New Customers", marker_color="#4CAF50",
                 text=new_cust_df["new_customers"].map("{:,}".format),
-                textposition="outside",
+                textposition="inside", textfont=dict(color="white", size=10),
             ))
             total_customers = int(new_cust_df["new_customers"].sum())
             fig2.add_hline(
@@ -201,8 +203,12 @@ with col_l:
             hole=0.45,
             color_discrete_sequence=px.colors.qualitative.Set2,
         )
-        fig.update_traces(textposition="outside", textinfo="label+percent")
-        fig.update_layout(height=340, margin=dict(t=10, b=10), showlegend=False)
+        fig.update_traces(textposition="inside", textinfo="percent",
+                          textfont_size=12)
+        fig.update_layout(height=340, margin=dict(t=10, b=80),
+                          showlegend=True,
+                          legend=dict(orientation="h", yanchor="top",
+                                      y=-0.05, xanchor="center", x=0.5))
         st.plotly_chart(fig, use_container_width=True)
 
 with col_r:
@@ -216,8 +222,10 @@ with col_r:
             labels={"rev_m": "Revenue (INR M)", "customer_state": ""},
             text="rev_m",
         )
-        fig2.update_traces(texttemplate="%{text:,.0f}M", textposition="outside")
-        fig2.update_layout(height=340, margin=dict(t=10, b=10))
+        fig2.update_traces(texttemplate="%{text:,.0f}M", textposition="inside",
+                           insidetextanchor="end", textfont=dict(size=10))
+        fig2.update_layout(height=340, margin=dict(t=10, b=10, r=20),
+                           xaxis=dict(range=[0, state_agg["rev_m"].max() * 1.15]))
         fig2.update_coloraxes(showscale=False)
         st.plotly_chart(fig2, use_container_width=True)
 
