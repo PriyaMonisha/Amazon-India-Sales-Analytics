@@ -256,24 +256,24 @@ def get_copurchase_matrix() -> pd.DataFrame:
     """Category-level co-purchase counts (same transaction_id)."""
     return _query("""
         WITH top8 AS (
-            SELECT p.category
+            SELECT p.subcategory AS category
             FROM fact_transactions f
             JOIN dim_products p ON f.product_id = p.product_id
-            WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
-            GROUP BY p.category
+            WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
+            GROUP BY p.subcategory
             ORDER BY COUNT(*) DESC
             LIMIT 8
         ),
         pairs AS (
-            SELECT p1.category AS cat_a, p2.category AS cat_b, COUNT(*) AS co_count
+            SELECT p1.subcategory AS cat_a, p2.subcategory AS cat_b, COUNT(*) AS co_count
             FROM fact_transactions f1
             JOIN fact_transactions f2
               ON f1.transaction_id = f2.transaction_id AND f1.product_id < f2.product_id
             JOIN dim_products p1 ON f1.product_id = p1.product_id
             JOIN dim_products p2 ON f2.product_id = p2.product_id
-            WHERE p1.category IN (SELECT category FROM top8)
-              AND p2.category IN (SELECT category FROM top8)
-            GROUP BY p1.category, p2.category
+            WHERE p1.subcategory IN (SELECT category FROM top8)
+              AND p2.subcategory IN (SELECT category FROM top8)
+            GROUP BY p1.subcategory, p2.subcategory
         )
         SELECT cat_a, cat_b, co_count FROM pairs
         UNION ALL
@@ -546,11 +546,11 @@ def get_purchase_frequency() -> pd.DataFrame:
 def get_category_transitions() -> pd.DataFrame:
     return _query("""
         WITH ranked AS (
-            SELECT f.customer_id, p.category,
+            SELECT f.customer_id, p.subcategory AS category,
                    ROW_NUMBER() OVER (PARTITION BY f.customer_id ORDER BY f.order_date) AS rn
             FROM fact_transactions f
             JOIN dim_products p ON f.product_id = p.product_id
-            WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
+            WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
         )
         SELECT r1.category AS from_cat, r2.category AS to_cat,
                COUNT(*) AS transitions
@@ -676,13 +676,13 @@ def get_yearly_revenue() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def get_category_market_share() -> pd.DataFrame:
     return _query("""
-        SELECT p.category,
+        SELECT p.subcategory AS category,
                SUM(f.final_amount_inr)/1e9  AS rev_bn,
                COUNT(*)                      AS orders
         FROM fact_transactions f
         JOIN dim_products p ON f.product_id = p.product_id
-        WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
-        GROUP BY p.category
+        WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
+        GROUP BY p.subcategory
         ORDER BY rev_bn DESC
     """)
 

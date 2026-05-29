@@ -496,7 +496,8 @@ trans_df = q("""
 fig, axes = plt.subplots(1, 2, figsize=(15, 5))
 
 # Purchase frequency histogram
-bins = [1, 2, 3, 5, 10, 20, 50, freq_df["order_count"].max() + 1]
+_max_orders = max(51, int(freq_df["order_count"].max()) + 1)
+bins = [1, 2, 3, 5, 10, 20, 50, _max_orders]
 labels_freq = ["1", "2", "3", "4-5", "6-10", "11-20", "21-50", "50+"]
 freq_df["bucket"] = pd.cut(freq_df["order_count"], bins=bins, labels=labels_freq[:len(bins)-1], right=False)
 bucket_counts = freq_df["bucket"].value_counts().reindex(labels_freq[:len(bins)-1]).fillna(0)
