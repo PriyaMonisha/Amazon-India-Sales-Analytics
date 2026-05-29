@@ -26,11 +26,17 @@ with st.sidebar:
 
     refresh_interval = st.selectbox(
         "Auto-refresh interval",
-        options=[None, 30, 60, 300],
-        format_func=lambda x: "Off" if x is None else f"Every {x}s",
+        options=[None, 60, 300],
+        format_func=lambda x: "Off (recommended)" if x is None else f"Every {x}s",
         index=0,
     )
     st.caption(f"Last refreshed: **{datetime.now().strftime('%H:%M:%S')}**")
+    st.info(
+        "**When to use auto-refresh:**\n\n"
+        "• **Off** — normal use; data is historical (2015-2025) and only changes when Airflow ETL runs weekly.\n\n"
+        "• **Every 60s** — use during live demo or evaluation to show the refresh capability.\n\n"
+        "• **Every 5min** — use when monitoring drift or the daily Airflow drift DAG is running."
+    )
 
     st.divider()
     st.subheader("🚨 Alert Thresholds")
@@ -342,19 +348,36 @@ if health_items:
 
 st.divider()
 
-# Navigation quick links
+# Navigation quick links — clickable HTML anchors (works in Streamlit 1.35+)
 st.markdown("### 🔗 Quick Navigation")
-pages = [
-    ("👥 Customer Churn",   "1_Customer_Churn"),
-    ("📈 Demand Forecast",  "2_Demand_Forecast"),
-    ("💲 Pricing",          "3_Pricing_Analytics"),
-    ("🎯 Recommendations",  "4_Recommendations"),
-    ("⚠️ Anomaly",          "5_Anomaly_Detection"),
-    ("🎉 Festival",         "6_Festival_Seasonal"),
-    ("👑 Prime & Demo",     "7_Prime_Demographics"),
-    ("🏷️ Brand & Products", "8_Brand_Products"),
-    ("🗺️ Customer Journey", "9_Customer_Journey"),
+st.caption("Click any card to jump to that analysis page.")
+
+nav_items = [
+    ("👥", "Customer Churn",    "/Customer_Churn",    "XGBoost churn model + SHAP explanations"),
+    ("📈", "Demand Forecast",   "/Demand_Forecast",   "Prophet forecasting per subcategory"),
+    ("💲", "Pricing",           "/Pricing_Analytics", "Price elasticity + revenue optimization"),
+    ("🎯", "Recommendations",   "/Recommendations",   "FP-Growth association rules"),
+    ("⚠️", "Anomaly Detection", "/Anomaly_Detection", "IsolationForest transaction scoring"),
+    ("🎉", "Festival & Season", "/Festival_Seasonal", "Festival impact + seasonal planning"),
+    ("👑", "Prime & Demographics","/Prime_Demographics","Prime vs non-Prime + age groups"),
+    ("🏷️", "Brand & Products",  "/Brand_Products",    "Brand analytics + ratings + returns"),
+    ("🗺️", "Customer Journey",  "/Customer_Journey",  "Transitions + CLV + product scorecard"),
 ]
-link_cols = st.columns(len(pages))
-for col, (label, _) in zip(link_cols, pages):
-    col.markdown(f"**{label}**")
+
+# 3 columns × 3 rows grid
+for row_start in range(0, len(nav_items), 3):
+    row_items = nav_items[row_start:row_start + 3]
+    cols = st.columns(3)
+    for col, (icon, label, path, desc) in zip(cols, row_items):
+        col.markdown(
+            f"""<a href="{path}" target="_self" style="text-decoration:none;">
+            <div style="border:1px solid #444;border-radius:8px;padding:12px 14px;
+                        background:#1e1e2e;cursor:pointer;transition:background 0.2s;"
+                 onmouseover="this.style.background='#2d2d44'"
+                 onmouseout="this.style.background='#1e1e2e'">
+                <span style="font-size:22px">{icon}</span>
+                <span style="font-weight:600;font-size:14px;margin-left:8px;color:#FF9900">{label}</span>
+                <p style="margin:4px 0 0 0;font-size:12px;color:#aaa">{desc}</p>
+            </div></a>""",
+            unsafe_allow_html=True,
+        )

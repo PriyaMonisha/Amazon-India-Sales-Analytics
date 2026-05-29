@@ -80,8 +80,17 @@ _PAGE_CHARTS: dict[str, list[str]] = {
 def show_offline(page: str = "overview") -> None:
     """Display a friendly offline banner + relevant pre-generated EDA charts."""
     st.info(
-        "🔌 **PostgreSQL offline** — showing pre-generated analysis from EDA notebook.  \n"
-        "To see live interactive charts: `docker compose up postgres redis -d` then run the ETL pipeline."
+        "🔌 **PostgreSQL offline** — showing pre-generated analysis from the EDA notebook.\n\n"
+        "**Why is PostgreSQL needed?**  All 1.1 million transaction records are stored in a "
+        "PostgreSQL database (running inside Docker). The interactive charts query this database live.\n\n"
+        "**How to start it (one-time setup):**\n"
+        "1. Open Docker Desktop → wait for it to start (green icon)\n"
+        "2. In terminal: `cd` to the project folder, then run:\n"
+        "   ```\n"
+        "   docker compose up postgres redis -d\n"
+        "   ```\n"
+        "3. On first run, also execute: `python notebooks/01_data_engineering.py` to load the data\n"
+        "4. Refresh this page — all charts will load automatically."
     )
 
     charts = _PAGE_CHARTS.get(page, _PAGE_CHARTS["overview"])
@@ -95,5 +104,5 @@ def show_offline(page: str = "overview") -> None:
     cols = st.columns(2)
     for i, path in enumerate(existing):
         with cols[i % 2]:
-            st.image(str(path), use_container_width=True,
+            st.image(str(path), use_column_width=True,
                      caption=path.stem.replace("_", " ").title())
