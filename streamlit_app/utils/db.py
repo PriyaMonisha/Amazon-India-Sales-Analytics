@@ -619,3 +619,153 @@ def get_anomaly_summary() -> pd.DataFrame:
         FROM fact_transactions
         WHERE order_date > '1900-01-01'
     """)
+
+
+# ---------------------------------------------------------------------------
+# Executive Dashboard / Command Centre
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=60)   # shorter TTL so "live" feel
+def get_current_month_perf() -> pd.DataFrame:
+    """Latest month revenue + orders vs same month prior year."""
+    return _query("""
+        WITH latest AS (
+            SELECT MAX(order_year * 100 + order_month) AS ym FROM fact_transactions
+            WHERE order_date > '1900-01-01'
+        ),
+        cur AS (
+            SELECT order_year, order_month,
+                   SUM(final_amount_inr)/1e6   AS rev_m,
+                   COUNT(*)                    AS orders,
+                   COUNT(DISTINCT customer_id) AS customers,
+                   AVG(final_amount_inr)        AS aov
+            FROM fact_transactions, latest
+            WHERE order_year * 100 + order_month = ym
+              AND order_date > '1900-01-01'
+            GROUP BY order_year, order_month
+        ),
+        prev AS (
+            SELECT SUM(final_amount_inr)/1e6   AS rev_m_prev,
+                   COUNT(*)                    AS orders_prev
+            FROM fact_transactions f, latest l
+            WHERE f.order_year * 100 + f.order_month =
+                  (l.ym / 100 - 1) * 100 + (l.ym % 100)
+              AND f.order_date > '1900-01-01'
+        )
+        SELECT c.*, p.rev_m_prev, p.orders_prev FROM cur c CROSS JOIN prev p
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_yearly_revenue() -> pd.DataFrame:
+    return _query("""
+        SELECT order_year,
+               SUM(final_amount_inr)/1e9              AS rev_bn,
+               COUNT(*)                               AS orders,
+               COUNT(DISTINCT customer_id)            AS customers,
+               AVG(final_amount_inr)                  AS aov,
+               SUM(discount_percent * final_amount_inr)
+                   / NULLIF(SUM(final_amount_inr),0)  AS avg_discount_weighted
+        FROM fact_transactions
+        WHERE order_date > '1900-01-01' AND order_year BETWEEN 2015 AND 2025
+        GROUP BY order_year
+        ORDER BY order_year
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_category_market_share() -> pd.DataFrame:
+    return _query("""
+        SELECT p.category,
+               SUM(f.final_amount_inr)/1e9  AS rev_bn,
+               COUNT(*)                      AS orders
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
+        GROUP BY p.category
+        ORDER BY rev_bn DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_geographic_spread() -> pd.DataFrame:
+    return _query("""
+        SELECT c.customer_state,
+               c.customer_tier,
+               SUM(f.final_amount_inr)/1e6   AS rev_m,
+               COUNT(DISTINCT f.customer_id) AS customers
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        WHERE f.order_date > '1900-01-01'
+          AND c.customer_state IS NOT NULL
+        GROUP BY c.customer_state, c.customer_tier
+        ORDER BY rev_m DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_new_customer_growth() -> pd.DataFrame:
+    """First purchase year for each customer → new acquisition per year."""
+    return _query("""
+        SELECT order_year AS cohort_year,
+               COUNT(*) AS new_customers
+        FROM (
+            SELECT customer_id, MIN(order_year) AS order_year
+            FROM fact_transactions
+            WHERE order_date > '1900-01-01'
+            GROUP BY customer_id
+        ) sub
+        WHERE order_year BETWEEN 2015 AND 2025
+        GROUP BY order_year
+        ORDER BY order_year
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_discount_revenue_impact() -> pd.DataFrame:
+    """Revenue retained vs discount given, by year."""
+    return _query("""
+        SELECT order_year,
+               SUM(original_price_inr * quantity)       AS gross_rev,
+               SUM(final_amount_inr)                    AS net_rev,
+               SUM(original_price_inr * quantity
+                   - final_amount_inr)                  AS discount_given,
+               AVG(discount_percent)                    AS avg_discount_pct
+        FROM fact_transactions
+        WHERE order_date > '1900-01-01'
+          AND order_year BETWEEN 2015 AND 2025
+          AND original_price_inr IS NOT NULL
+        GROUP BY order_year
+        ORDER BY order_year
+    """)
+
+
+@st.cache_data(ttl=60)
+def get_kpi_alert_data() -> pd.DataFrame:
+    """Single-row KPI snapshot used for threshold alerts."""
+    return _query("""
+        WITH latest_year AS (
+            SELECT MAX(order_year) AS yr FROM fact_transactions WHERE order_date > '1900-01-01'
+        ),
+        prev_year AS (SELECT yr - 1 AS yr FROM latest_year),
+        cur  AS (SELECT SUM(final_amount_inr)/1e6 AS rev_m, COUNT(*) AS orders,
+                        AVG(final_amount_inr) AS aov
+                 FROM fact_transactions, latest_year
+                 WHERE order_year = latest_year.yr AND order_date > '1900-01-01'),
+        prev AS (SELECT SUM(final_amount_inr)/1e6 AS rev_m_prev
+                 FROM fact_transactions, prev_year
+                 WHERE order_year = prev_year.yr AND order_date > '1900-01-01'),
+        ret  AS (SELECT ROUND(SUM(CASE WHEN return_status='Returned' THEN 1 ELSE 0 END)
+                              ::numeric / COUNT(*) * 100, 2) AS return_rate
+                 FROM fact_transactions WHERE order_date > '1900-01-01'),
+        del  AS (SELECT ROUND(AVG(delivery_days)::numeric, 1) AS avg_del
+                 FROM fact_transactions
+                 WHERE delivery_days IS NOT NULL AND delivery_days >= 0
+                   AND order_date > '1900-01-01')
+        SELECT c.rev_m, c.orders, c.aov,
+               p.rev_m_prev,
+               ROUND(((c.rev_m - p.rev_m_prev) / NULLIF(p.rev_m_prev, 0) * 100)::numeric, 1) AS yoy_growth_pct,
+               r.return_rate,
+               d.avg_del
+        FROM cur c CROSS JOIN prev p CROSS JOIN ret r CROSS JOIN del d
+    """)
