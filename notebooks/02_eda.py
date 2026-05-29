@@ -469,6 +469,180 @@ plt.suptitle("YoY Revenue Growth by Subcategory (INR Million)", fontweight="bold
 plt.tight_layout(); save(fig, "20_yoy_subcategory.png")
 
 
+# %% Q21 (GUVI Q17): Customer Journey Analysis
+# Purchase frequency distribution + category-to-category transition heatmap
+freq_df = q("""
+    SELECT customer_id, COUNT(*) AS order_count
+    FROM fact_transactions
+    WHERE order_date > '1900-01-01'
+    GROUP BY customer_id
+""")
+
+trans_df = q("""
+    WITH ranked AS (
+        SELECT f.customer_id, p.category,
+               ROW_NUMBER() OVER (PARTITION BY f.customer_id ORDER BY f.order_date) AS rn
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
+    )
+    SELECT r1.category AS from_cat, r2.category AS to_cat, COUNT(*) AS transitions
+    FROM ranked r1
+    JOIN ranked r2 ON r1.customer_id = r2.customer_id AND r2.rn = r1.rn + 1
+    GROUP BY r1.category, r2.category
+    ORDER BY transitions DESC
+""")
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+# Purchase frequency histogram
+bins = [1, 2, 3, 5, 10, 20, 50, freq_df["order_count"].max() + 1]
+labels_freq = ["1", "2", "3", "4-5", "6-10", "11-20", "21-50", "50+"]
+freq_df["bucket"] = pd.cut(freq_df["order_count"], bins=bins, labels=labels_freq[:len(bins)-1], right=False)
+bucket_counts = freq_df["bucket"].value_counts().reindex(labels_freq[:len(bins)-1]).fillna(0)
+bars = axes[0].bar(bucket_counts.index, bucket_counts.values, color=PAL[:len(bucket_counts)], edgecolor="white")
+axes[0].bar_label(bars, fmt="%,.0f", fontsize=8)
+axes[0].set_title("Purchase Frequency Distribution", fontweight="bold")
+axes[0].set_xlabel("Number of Orders per Customer")
+axes[0].set_ylabel("Number of Customers")
+axes[0].tick_params(axis="x", rotation=20)
+one_order_pct = (freq_df["order_count"] == 1).mean() * 100
+axes[0].text(0.98, 0.95, f"One-time buyers: {one_order_pct:.1f}%",
+             transform=axes[0].transAxes, ha="right", fontsize=9, color="red")
+
+# Category transition heatmap
+if not trans_df.empty:
+    pivot_t = trans_df.pivot(index="from_cat", columns="to_cat", values="transitions").fillna(0)
+    pivot_t = pivot_t.div(pivot_t.sum(axis=1), axis=0) * 100  # normalise to row %
+    sns.heatmap(pivot_t, annot=True, fmt=".0f", cmap="Blues", ax=axes[1],
+                linewidths=0.4, annot_kws={"size": 9})
+    axes[1].set_title("Category Transition Matrix\n(% of purchases followed by each category)",
+                      fontweight="bold")
+    axes[1].set_xlabel("Next Purchase Category")
+    axes[1].set_ylabel("Current Purchase Category")
+    axes[1].tick_params(axis="x", rotation=30)
+    axes[1].tick_params(axis="y", rotation=0)
+
+plt.suptitle("Customer Journey Analysis", fontweight="bold", fontsize=13)
+plt.tight_layout()
+save(fig, "21_customer_journey.png")
+
+
+# %% Q22 (GUVI Q18): Product Lifecycle Analysis
+lifecycle_df = q("""
+    SELECT p.launch_year, p.subcategory,
+           SUM(f.final_amount_inr) / 1e6 AS rev_m,
+           COUNT(DISTINCT p.product_id)   AS products
+    FROM fact_transactions f
+    JOIN dim_products p ON f.product_id = p.product_id
+    WHERE p.launch_year IS NOT NULL AND p.launch_year BETWEEN 2010 AND 2025
+    GROUP BY p.launch_year, p.subcategory
+    ORDER BY p.launch_year
+""")
+
+age_df = q("""
+    SELECT (2025 - p.launch_year) AS product_age,
+           SUM(f.final_amount_inr) / 1e6 AS rev_m,
+           COUNT(*) AS orders
+    FROM fact_transactions f
+    JOIN dim_products p ON f.product_id = p.product_id
+    WHERE p.launch_year IS NOT NULL AND p.launch_year BETWEEN 2010 AND 2025
+    GROUP BY product_age
+    ORDER BY product_age
+""")
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+# Launch year × subcategory heatmap
+if not lifecycle_df.empty:
+    pivot_lc = lifecycle_df.pivot(index="subcategory", columns="launch_year", values="rev_m").fillna(0)
+    sns.heatmap(pivot_lc, annot=True, fmt=".0f", cmap="YlOrRd", ax=axes[0],
+                linewidths=0.3, annot_kws={"size": 8})
+    axes[0].set_title("Revenue (INR M) by Product Launch Year\n× Subcategory", fontweight="bold")
+    axes[0].set_xlabel("Product Launch Year")
+    axes[0].set_ylabel("Subcategory")
+    axes[0].tick_params(axis="x", rotation=45)
+    axes[0].tick_params(axis="y", rotation=0)
+
+# Product age vs revenue (lifecycle curve)
+if not age_df.empty:
+    axes[1].bar(age_df["product_age"], age_df["rev_m"],
+                color=PAL[:len(age_df)], edgecolor="white")
+    z = np.polyfit(age_df["product_age"], age_df["rev_m"], 2)
+    p_fit = np.poly1d(z)
+    x_smooth = np.linspace(age_df["product_age"].min(), age_df["product_age"].max(), 100)
+    axes[1].plot(x_smooth, p_fit(x_smooth), "r--", lw=2, label="Trend (quadratic)")
+    axes[1].set_title("Revenue by Product Age\n(2025 – Launch Year)", fontweight="bold")
+    axes[1].set_xlabel("Product Age (years)")
+    axes[1].set_ylabel("Revenue (INR Million)")
+    axes[1].legend(fontsize=9)
+
+plt.suptitle("Product Lifecycle Analysis", fontweight="bold", fontsize=13)
+plt.tight_layout()
+save(fig, "22_product_lifecycle.png")
+
+
+# %% Q23 (GUVI Q19): Competitive Pricing Analysis
+pricing_brand_df = q("""
+    SELECT p.brand, f.original_price_inr
+    FROM fact_transactions f
+    JOIN dim_products p ON f.product_id = p.product_id
+    WHERE p.brand IN (
+        SELECT brand FROM dim_products
+        WHERE brand IS NOT NULL
+        GROUP BY brand ORDER BY COUNT(*) DESC LIMIT 10
+    )
+    AND f.original_price_inr > 0 AND f.original_price_inr < 500000
+""")
+
+pricing_subcat_df = q("""
+    SELECT p.subcategory,
+           PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY f.original_price_inr) AS p25,
+           PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY f.original_price_inr) AS median,
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY f.original_price_inr) AS p75,
+           MIN(f.original_price_inr) AS min_p,
+           MAX(f.original_price_inr) AS max_p
+    FROM fact_transactions f
+    JOIN dim_products p ON f.product_id = p.product_id
+    WHERE f.original_price_inr > 0 AND f.original_price_inr < 500000
+      AND p.subcategory IS NOT NULL
+    GROUP BY p.subcategory
+    ORDER BY median DESC
+""")
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+# Brand price box plots
+if not pricing_brand_df.empty:
+    brand_order = (pricing_brand_df.groupby("brand")["original_price_inr"]
+                   .median().sort_values(ascending=False).index.tolist())
+    sns.boxplot(data=pricing_brand_df, x="brand", y="original_price_inr",
+                order=brand_order, palette="Set2", ax=axes[0], showfliers=False)
+    axes[0].set_title("Price Range by Brand (Top 10)\n(outliers hidden)", fontweight="bold")
+    axes[0].set_xlabel("")
+    axes[0].set_ylabel("Price (INR)")
+    axes[0].yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"₹{x/1000:.0f}K" if x >= 1000 else f"₹{x:.0f}"))
+    axes[0].tick_params(axis="x", rotation=30)
+
+# Subcategory competitive positioning (price range bars with IQR)
+if not pricing_subcat_df.empty:
+    sub_order = pricing_subcat_df.sort_values("median", ascending=True)
+    y_pos = range(len(sub_order))
+    axes[1].barh(y_pos, sub_order["p75"] - sub_order["p25"],
+                 left=sub_order["p25"], color=PAL[0], alpha=0.7, label="IQR (25–75%)", height=0.6)
+    axes[1].scatter(sub_order["median"], list(y_pos), color="red", zorder=5, s=40, label="Median")
+    axes[1].set_yticks(list(y_pos))
+    axes[1].set_yticklabels(sub_order["subcategory"], fontsize=9)
+    axes[1].set_title("Price Positioning by Subcategory\n(IQR bar + median dot)", fontweight="bold")
+    axes[1].set_xlabel("Price (INR)")
+    axes[1].xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"₹{x/1000:.0f}K" if x >= 1000 else f"₹{x:.0f}"))
+    axes[1].legend(fontsize=9)
+
+plt.suptitle("Competitive Pricing Analysis", fontweight="bold", fontsize=13)
+plt.tight_layout()
+save(fig, "23_competitive_pricing.png")
+
+
 # %% Summary
 charts = sorted(CHARTS.glob("*.png"))
 print(f"\nEDA COMPLETE: {len(charts)} charts saved")

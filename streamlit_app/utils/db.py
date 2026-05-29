@@ -299,6 +299,310 @@ def get_transaction_sample(n: int = 3000) -> pd.DataFrame:
     """, {"n": n})
 
 
+# ---------------------------------------------------------------------------
+# Festival & Seasonal
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def get_festival_comparison() -> pd.DataFrame:
+    return _query("""
+        SELECT festival_name,
+               COUNT(*)                     AS orders,
+               SUM(final_amount_inr)/1e6    AS revenue_m,
+               AVG(final_amount_inr)        AS avg_order_value,
+               AVG(discount_percent)        AS avg_discount
+        FROM fact_transactions
+        WHERE is_festival_sale = TRUE
+          AND festival_name IS NOT NULL
+          AND order_date > '1900-01-01'
+        GROUP BY festival_name
+        ORDER BY revenue_m DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_festival_vs_regular() -> pd.DataFrame:
+    return _query("""
+        SELECT order_year,
+               SUM(CASE WHEN is_festival_sale THEN final_amount_inr ELSE 0 END)/1e6 AS festival_rev_m,
+               SUM(CASE WHEN NOT is_festival_sale THEN final_amount_inr ELSE 0 END)/1e6 AS regular_rev_m
+        FROM fact_transactions
+        WHERE order_date > '1900-01-01' AND order_year BETWEEN 2015 AND 2025
+        GROUP BY order_year
+        ORDER BY order_year
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_monthly_avg_revenue() -> pd.DataFrame:
+    return _query("""
+        SELECT order_month,
+               AVG(monthly_rev) AS avg_rev_m
+        FROM (
+            SELECT order_year, order_month,
+                   SUM(final_amount_inr)/1e6 AS monthly_rev
+            FROM fact_transactions
+            WHERE order_date > '1900-01-01'
+            GROUP BY order_year, order_month
+        ) sub
+        GROUP BY order_month
+        ORDER BY order_month
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_festival_subcategory() -> pd.DataFrame:
+    return _query("""
+        SELECT p.subcategory, f.festival_name,
+               SUM(f.final_amount_inr)/1e6 AS revenue_m
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.is_festival_sale = TRUE
+          AND f.festival_name IS NOT NULL
+          AND f.order_date > '1900-01-01'
+          AND p.subcategory IS NOT NULL
+        GROUP BY p.subcategory, f.festival_name
+        ORDER BY revenue_m DESC
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Prime & Demographics
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def get_prime_detailed() -> pd.DataFrame:
+    return _query("""
+        SELECT c.is_prime_member,
+               COUNT(DISTINCT f.customer_id) AS customers,
+               COUNT(*)                       AS orders,
+               SUM(f.final_amount_inr)/1e6   AS revenue_m,
+               AVG(f.final_amount_inr)        AS avg_order_value,
+               AVG(f.discount_percent)        AS avg_discount
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        WHERE f.order_date > '1900-01-01'
+        GROUP BY c.is_prime_member
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_prime_category_preference() -> pd.DataFrame:
+    return _query("""
+        SELECT c.is_prime_member, p.subcategory,
+               SUM(f.final_amount_inr)/1e6 AS revenue_m
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
+        GROUP BY c.is_prime_member, p.subcategory
+        ORDER BY revenue_m DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_age_group_spending() -> pd.DataFrame:
+    return _query("""
+        SELECT c.customer_age_group,
+               COUNT(DISTINCT f.customer_id) AS customers,
+               COUNT(*)                       AS orders,
+               SUM(f.final_amount_inr)/1e6   AS revenue_m,
+               AVG(f.final_amount_inr)        AS avg_order_value
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        WHERE f.order_date > '1900-01-01'
+          AND c.customer_age_group IS NOT NULL
+          AND c.customer_age_group != 'nan'
+        GROUP BY c.customer_age_group
+        ORDER BY avg_order_value DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_age_subcategory() -> pd.DataFrame:
+    return _query("""
+        SELECT c.customer_age_group, p.subcategory,
+               SUM(f.final_amount_inr)/1e6 AS revenue_m
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01'
+          AND c.customer_age_group IS NOT NULL
+          AND c.customer_age_group != 'nan'
+          AND p.subcategory IS NOT NULL
+        GROUP BY c.customer_age_group, p.subcategory
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_tier_spending() -> pd.DataFrame:
+    return _query("""
+        SELECT c.customer_tier,
+               COUNT(DISTINCT f.customer_id) AS customers,
+               AVG(f.final_amount_inr)        AS avg_order_value,
+               SUM(f.final_amount_inr)/1e6   AS revenue_m,
+               AVG(f.discount_percent)        AS avg_discount
+        FROM fact_transactions f
+        JOIN dim_customers c ON f.customer_id = c.customer_id
+        WHERE f.order_date > '1900-01-01' AND c.customer_tier IS NOT NULL
+        GROUP BY c.customer_tier
+        ORDER BY avg_order_value DESC
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Brand & Products
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def get_brand_detailed(limit: int = 15) -> pd.DataFrame:
+    return _query("""
+        SELECT p.brand,
+               SUM(f.final_amount_inr)/1e9   AS revenue_bn,
+               COUNT(*)                       AS orders,
+               AVG(f.product_rating)          AS avg_rating,
+               AVG(f.discount_percent)        AS avg_discount,
+               COUNT(DISTINCT p.product_id)   AS products
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.brand IS NOT NULL
+        GROUP BY p.brand
+        ORDER BY revenue_bn DESC
+        LIMIT :limit
+    """, {"limit": limit})
+
+
+@st.cache_data(ttl=300)
+def get_product_ratings_detail() -> pd.DataFrame:
+    return _query("""
+        SELECT p.subcategory,
+               ROUND(AVG(f.product_rating)::numeric, 2) AS avg_rating,
+               COUNT(*) AS reviews,
+               SUM(CASE WHEN f.product_rating >= 4 THEN 1 ELSE 0 END)::float / COUNT(*) * 100 AS pct_high,
+               SUM(CASE WHEN f.product_rating < 3  THEN 1 ELSE 0 END)::float / COUNT(*) * 100 AS pct_low
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.product_rating IS NOT NULL AND f.order_date > '1900-01-01'
+          AND p.subcategory IS NOT NULL
+        GROUP BY p.subcategory
+        ORDER BY avg_rating DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_launch_year_revenue() -> pd.DataFrame:
+    return _query("""
+        SELECT p.launch_year, p.subcategory,
+               SUM(f.final_amount_inr)/1e6 AS revenue_m,
+               COUNT(DISTINCT p.product_id) AS products
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE p.launch_year IS NOT NULL AND p.launch_year BETWEEN 2010 AND 2025
+          AND f.order_date > '1900-01-01'
+        GROUP BY p.launch_year, p.subcategory
+        ORDER BY p.launch_year, revenue_m DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_returns_detail() -> pd.DataFrame:
+    return _query("""
+        SELECT p.subcategory,
+               COUNT(*) AS total_orders,
+               SUM(CASE WHEN f.return_status = 'Returned' THEN 1 ELSE 0 END) AS returns,
+               ROUND(SUM(CASE WHEN f.return_status = 'Returned' THEN 1 ELSE 0 END)::numeric
+                     / COUNT(*) * 100, 2) AS return_rate,
+               AVG(f.product_rating) AS avg_rating,
+               AVG(f.discount_percent) AS avg_discount
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
+        GROUP BY p.subcategory
+        ORDER BY return_rate DESC
+    """)
+
+
+# ---------------------------------------------------------------------------
+# Customer Journey
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def get_purchase_frequency() -> pd.DataFrame:
+    return _query("""
+        SELECT order_count,
+               COUNT(*) AS customers
+        FROM (
+            SELECT customer_id, COUNT(*) AS order_count
+            FROM fact_transactions
+            WHERE order_date > '1900-01-01'
+            GROUP BY customer_id
+        ) sub
+        GROUP BY order_count
+        ORDER BY order_count
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_category_transitions() -> pd.DataFrame:
+    return _query("""
+        WITH ranked AS (
+            SELECT f.customer_id, p.category,
+                   ROW_NUMBER() OVER (PARTITION BY f.customer_id ORDER BY f.order_date) AS rn
+            FROM fact_transactions f
+            JOIN dim_products p ON f.product_id = p.product_id
+            WHERE f.order_date > '1900-01-01' AND p.category IS NOT NULL
+        )
+        SELECT r1.category AS from_cat, r2.category AS to_cat,
+               COUNT(*) AS transitions
+        FROM ranked r1
+        JOIN ranked r2 ON r1.customer_id = r2.customer_id AND r2.rn = r1.rn + 1
+        GROUP BY r1.category, r2.category
+        ORDER BY transitions DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_product_performance_summary() -> pd.DataFrame:
+    return _query("""
+        SELECT p.subcategory,
+               SUM(f.final_amount_inr)/1e6   AS revenue_m,
+               COUNT(*)                       AS orders,
+               COUNT(DISTINCT f.customer_id)  AS customers,
+               AVG(f.product_rating)          AS avg_rating,
+               ROUND(SUM(CASE WHEN f.return_status='Returned' THEN 1 ELSE 0 END)::numeric
+                     / COUNT(*) * 100, 1)     AS return_rate
+        FROM fact_transactions f
+        JOIN dim_products p ON f.product_id = p.product_id
+        WHERE f.order_date > '1900-01-01' AND p.subcategory IS NOT NULL
+        GROUP BY p.subcategory
+        ORDER BY revenue_m DESC
+    """)
+
+
+@st.cache_data(ttl=300)
+def get_clv_by_segment() -> pd.DataFrame:
+    return _query("""
+        WITH customer_stats AS (
+            SELECT f.customer_id,
+                   SUM(f.final_amount_inr) AS clv,
+                   COUNT(*)                AS orders,
+                   MAX(f.order_date)       AS last_order
+            FROM fact_transactions f
+            WHERE f.order_date > '1900-01-01'
+            GROUP BY f.customer_id
+        )
+        SELECT c.customer_tier,
+               ROUND(AVG(cs.clv)::numeric, 0)    AS avg_clv,
+               ROUND(AVG(cs.orders)::numeric, 1)  AS avg_orders,
+               COUNT(*)                           AS customers
+        FROM customer_stats cs
+        JOIN dim_customers c ON cs.customer_id = c.customer_id
+        WHERE c.customer_tier IS NOT NULL
+        GROUP BY c.customer_tier
+        ORDER BY avg_clv DESC
+    """)
+
+
 @st.cache_data(ttl=300)
 def get_anomaly_summary() -> pd.DataFrame:
     return _query("""

@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+from streamlit_app.utils import db
+
+st.set_page_config(page_title="Brand & Products", page_icon="🏷️", layout="wide")
+st.title("🏷️ Brand Analytics & Product Performance")
+st.caption("Brand market share · product ratings · lifecycle analysis · returns & cancellations")
+
+# ---------------------------------------------------------------------------
+# Chart 1 — Brand Revenue & Market Share
+# ---------------------------------------------------------------------------
+st.subheader("Brand Performance Overview")
+brand_df = db.get_brand_detailed(limit=15)
+if not brand_df.empty:
+    col_l, col_r = st.columns([3, 2])
+    with col_l:
+        fig = px.bar(
+            brand_df.sort_values("revenue_bn", ascending=True),
+            x="revenue_bn", y="brand", orientation="h",
+            color="avg_rating",
+            color_continuous_scale="RdYlGn",
+            text="revenue_bn",
+            labels={"revenue_bn": "Revenue (INR Billion)", "brand": "",
+                    "avg_rating": "Avg Rating"},
+            color_continuous_midpoint=3.5,
+        )
+        fig.update_traces(texttemplate="%{text:.2f}B", textposition="outside")
+        fig.update_layout(height=420, margin=dict(t=10, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    with col_r:
+        fig2 = px.scatter(
+            brand_df,
+            x="avg_discount", y="avg_rating",
+            size="revenue_bn", color="brand",
+            text="brand",
+            labels={"avg_discount": "Avg Discount (%)", "avg_rating": "Avg Rating (/ 5)",
+                    "revenue_bn": "Revenue (Bn)"},
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig2.update_traces(textposition="top center", textfont_size=9)
+        fig2.update_layout(height=420, margin=dict(t=10, b=10), showlegend=False,
+                           title="Discount vs Rating<br>(bubble = revenue)")
+        st.plotly_chart(fig2, use_container_width=True)
+    with st.expander("Full Brand Table"):
+        display = brand_df.copy()
+        display["revenue_bn"] = display["revenue_bn"].map("{:.3f}B".format)
+        display["avg_rating"]  = display["avg_rating"].map("{:.2f}".format)
+        display["avg_discount"]= display["avg_discount"].map("{:.1f}%".format)
+        display.columns = ["Brand","Revenue","Orders","Avg Rating","Avg Discount","Products"]
+        st.dataframe(display.reset_index(drop=True), use_container_width=True)
+else:
+    st.error("PostgreSQL unavailable.")
+
+# ---------------------------------------------------------------------------
+# Chart 2 — Product Ratings Deep Dive
+# ---------------------------------------------------------------------------
+st.subheader("Product Rating & Review Analysis")
+ratings_df = db.get_product_ratings_detail()
+if not ratings_df.empty:
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = px.bar(
+            ratings_df.sort_values("avg_rating", ascending=True),
+            x="avg_rating", y="subcategory", orientation="h",
+            color="avg_rating",
+            color_continuous_scale="RdYlGn",
+            text="avg_rating",
+            labels={"avg_rating": "Avg Rating", "subcategory": ""},
+            range_color=[1, 5],
+        )
+        fig.update_traces(texttemplate="%{text:.2f} ⭐", textposition="outside")
+        fig.update_layout(height=340, margin=dict(t=10, b=10))
+        fig.update_coloraxes(showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(
+            x=ratings_df["subcategory"], y=ratings_df["pct_high"],
+            name="High Rating (≥4★)", marker_color="#4CAF50",
+        ))
+        fig2.add_trace(go.Bar(
+            x=ratings_df["subcategory"], y=ratings_df["pct_low"],
+            name="Low Rating (<3★)", marker_color="#F44336",
+        ))
+        fig2.update_layout(barmode="group", height=340, margin=dict(t=10, b=10),
+                           xaxis_tickangle=-30, yaxis_title="% of Reviews",
+                           legend=dict(orientation="h", yanchor="bottom", y=1.02))
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Chart 3 — New Product Launch Performance (Product Lifecycle)
+# ---------------------------------------------------------------------------
+st.subheader("New Product Launch Performance")
+launch_df = db.get_launch_year_revenue()
+if not launch_df.empty:
+    col1, col2 = st.columns(2)
+    with col1:
+        agg = launch_df.groupby("launch_year")["revenue_m"].sum().reset_index()
+        fig = px.line(
+            agg, x="launch_year", y="revenue_m",
+            markers=True,
+            labels={"launch_year": "Launch Year", "revenue_m": "Total Revenue (INR M)"},
+            title="Revenue Generated by Products' Launch Year",
+            color_discrete_sequence=["#FF9900"],
+        )
+        fig.update_layout(height=320, margin=dict(t=40, b=10))
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        selected_year = st.selectbox(
+            "Show subcategory breakdown for launch year:",
+            sorted(launch_df["launch_year"].unique(), reverse=True),
+        )
+        year_df = launch_df[launch_df["launch_year"] == selected_year].nlargest(8, "revenue_m")
+        fig2 = px.pie(
+            year_df, values="revenue_m", names="subcategory",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            title=f"Revenue Mix — Products Launched {selected_year}",
+        )
+        fig2.update_traces(textposition="outside", textinfo="label+percent")
+        fig2.update_layout(height=320, margin=dict(t=40, b=10))
+        st.plotly_chart(fig2, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Chart 4 — Return & Cancellation Analysis
+# ---------------------------------------------------------------------------
+st.subheader("Return & Cancellation Analysis")
+ret_df = db.get_returns_detail()
+if not ret_df.empty:
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = px.bar(
+            ret_df.sort_values("return_rate", ascending=True),
+            x="return_rate", y="subcategory", orientation="h",
+            color="return_rate",
+            color_continuous_scale="RdYlGn_r",
+            text="return_rate",
+            labels={"return_rate": "Return Rate (%)", "subcategory": ""},
+        )
+        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig.update_layout(height=340, margin=dict(t=10, b=10))
+        fig.update_coloraxes(showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        # Return rate vs avg rating scatter — low ratings → high returns?
+        fig2 = px.scatter(
+            ret_df,
+            x="avg_rating", y="return_rate",
+            size="total_orders", color="avg_discount",
+            text="subcategory",
+            color_continuous_scale="Blues",
+            labels={"avg_rating": "Avg Product Rating", "return_rate": "Return Rate (%)",
+                    "avg_discount": "Avg Discount (%)","total_orders": "Orders"},
+        )
+        fig2.update_traces(textposition="top center", textfont_size=9)
+        fig2.update_layout(height=340, margin=dict(t=10, b=10),
+                           title="Rating vs Return Rate<br>(bubble = order volume)")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # Key stats
+    avg_ret = ret_df["return_rate"].mean()
+    worst   = ret_df.loc[ret_df["return_rate"].idxmax(), "subcategory"]
+    best    = ret_df.loc[ret_df["return_rate"].idxmin(), "subcategory"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Overall Avg Return Rate", f"{avg_ret:.1f}%")
+    c2.metric("Highest Return Rate", worst, delta=f"{ret_df['return_rate'].max():.1f}%", delta_color="inverse")
+    c3.metric("Lowest Return Rate",  best,  delta=f"{ret_df['return_rate'].min():.1f}%")
