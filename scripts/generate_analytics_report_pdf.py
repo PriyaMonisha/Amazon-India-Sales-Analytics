@@ -99,18 +99,17 @@ _HDR_STYLE = TableStyle([
     ("TEXTCOLOR",     (0,0), (-1,0),  WHITE),
     ("FONTNAME",      (0,0), (-1,0),  "Helvetica-Bold"),
     ("FONTSIZE",      (0,0), (-1,0),  8),
-    ("TOPPADDING",    (0,0), (-1,0),  6),
-    ("BOTTOMPADDING", (0,0), (-1,0),  6),
+    ("TOPPADDING",    (0,0), (-1,-1), 5),
+    ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ("LEFTPADDING",   (0,0), (-1,-1), 6),
-    ("ROWBACKGROUNDS",(0,1), (-1,-1), [WHITE, AMAZON_LIGHT]),
+    ("RIGHTPADDING",  (0,0), (-1,-1), 6),
     ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
     ("FONTSIZE",      (0,1), (-1,-1), 8),
-    ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
-    ("TOPPADDING",    (0,1), (-1,-1), 4),
-    ("BOTTOMPADDING", (0,1), (-1,-1), 4),
+    ("VALIGN",        (0,0), (-1,-1), "TOP"),
     ("GRID",          (0,0), (-1,-1), 0.4, colors.HexColor("#E0E0E0")),
     ("BOX",           (0,0), (-1,-1), 0.6, AMAZON_DARK),
     ("ALIGN",         (0,0), (-1,-1), "LEFT"),
+    ("BACKGROUND",    (0,1), (-1,-1), WHITE),
 ])
 
 def _chart(filename: str, width_cm: float = 15.0) -> Image | None:
