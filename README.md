@@ -205,13 +205,17 @@ Tests cover ETL transformations, all 5 API prediction endpoints, and model train
 
 ---
 
-### Full pipeline (requires Python 3.11 + PostgreSQL 15+)
+### Option A — Local dev (requires Python 3.11 + PostgreSQL 15+)
 
-**Step 1 — Set your database credentials in `.env`** (auto-created by `make setup`):
+**Step 1 — Edit `.env`** (auto-created by `make setup`):
 
 ```
+# Your PostgreSQL connection string
 AMAZON_DB_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/amazon_sales
-API_KEY=any-string-you-choose
+
+# Invent any secret string — this protects your API endpoints.
+# Use the same value in every curl/request call.
+API_KEY=choose-any-secret-string
 ```
 
 **Step 2 — Run the pipeline:**
@@ -228,11 +232,13 @@ Dashboard → **http://localhost:8501** · API docs → **http://localhost:8000/
 
 ---
 
-### Full Docker stack (requires Docker Desktop)
+### Option B — Full Docker stack (requires Docker Desktop)
+
+Skip local PostgreSQL setup entirely — Docker spins up all 15 services automatically.
 
 ```bash
-make setup    # creates venv + copies .env
-make all      # docker compose up --build (15 services)
+make setup    # creates venv + copies .env — edit API_KEY in .env before next step
+make all      # docker compose up --build (15 services, ~5 min first run)
 ```
 
 Full stack → Dashboard **:8501** · API **:8000** · Grafana **:3000** · Airflow **:8080** · MLflow **:5001**
