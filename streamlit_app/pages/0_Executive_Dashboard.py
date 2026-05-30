@@ -1,7 +1,7 @@
 """
 Executive Command Centre
-Covers GUVI Dashboard Q2 (real-time monitor + alerts), Q3 (strategic overview),
-Q4 (financial performance), Q5 (growth analytics), Q30 (BI command centre).
+Real-time monitor + alerts, strategic overview, financial performance,
+growth analytics, and BI command centre.
 """
 from __future__ import annotations
 import sys

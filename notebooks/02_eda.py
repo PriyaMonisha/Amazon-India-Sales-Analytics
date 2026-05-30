@@ -469,7 +469,7 @@ plt.suptitle("YoY Revenue Growth by Subcategory (INR Million)", fontweight="bold
 plt.tight_layout(); save(fig, "20_yoy_subcategory.png")
 
 
-# %% Q21 (GUVI Q17): Customer Journey Analysis
+# %% Q21: Customer Journey Analysis
 # Purchase frequency distribution + category-to-category transition heatmap
 freq_df = q("""
     SELECT customer_id, COUNT(*) AS order_count
@@ -529,7 +529,7 @@ plt.tight_layout()
 save(fig, "21_customer_journey.png")
 
 
-# %% Q22 (GUVI Q18): Product Lifecycle Analysis
+# %% Q22: Product Lifecycle Analysis
 lifecycle_df = q("""
     SELECT p.launch_year, p.subcategory,
            SUM(f.final_amount_inr) / 1e6 AS rev_m,
@@ -583,7 +583,7 @@ plt.tight_layout()
 save(fig, "22_product_lifecycle.png")
 
 
-# %% Q23 (GUVI Q19): Competitive Pricing Analysis
+# %% Q23: Competitive Pricing Analysis
 pricing_brand_df = q("""
     SELECT p.brand, f.original_price_inr
     FROM fact_transactions f

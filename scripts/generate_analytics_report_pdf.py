@@ -508,7 +508,7 @@ def build():
     story.append(Spacer(1, 0.3*cm))
     story.append(Paragraph("1.1 Million Transactions  ·  2015–2025  ·  6 Product Subcategories  ·  30+ Cities", S_COVER_META))
     story.append(Spacer(1, 0.3*cm))
-    story.append(Paragraph(f"Version 1.0  ·  {datetime.now().strftime('%B %Y')}  ·  GUVI Data Science Programme", S_COVER_META))
+    story.append(Paragraph(f"Version 1.0  ·  {datetime.now().strftime('%B %Y')}  ·  Amazon India Sales Analytics", S_COVER_META))
     story.append(PageBreak())
 
     # ── EXECUTIVE SUMMARY ──────────────────────────────────────────────────────

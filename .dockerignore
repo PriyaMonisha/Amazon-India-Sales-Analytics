@@ -41,5 +41,5 @@ INTERVIEW_PREP_AMAZON_SALES.md
 # Tests
 tests/
 
-# Claude memory
+# AI tooling (local dev only)
 .claude/

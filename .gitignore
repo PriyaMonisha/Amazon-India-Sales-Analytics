@@ -6,7 +6,8 @@
 # Model artifacts (binaries) — bake into Docker image, not git
 /artifacts/models/*.pkl
 /artifacts/models/*.json
-/artifacts/drift/*.html
+/artifacts/drift/
+/artifacts/charts/
 
 # Python
 venv/
