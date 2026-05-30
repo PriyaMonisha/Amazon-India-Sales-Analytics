@@ -1,9 +1,11 @@
+import hashlib
 import json
 import logging
-import pickle
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+import joblib
 import mlflow
 import numpy as np
 import optuna
@@ -16,7 +18,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import OrdinalEncoder
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -26,12 +28,11 @@ import config
 from config import (
     ARTIFACTS_DIR,
     CV_FOLDS,
-    MLFLOW_EXPERIMENT,
-    MLFLOW_TRACKING_URI,
     N_OPTUNA_TRIALS,
     RANDOM_STATE,
     SAMPLE_ROWS,
 )
+from src.utils.mlflow_utils import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ TRAIN_REF_DATE    = date(2023, 1, 1)   # features < 2023-01-01; label Jan–Mar 
 TEST_REF_DATE     = date(2024, 1, 1)   # features < 2024-01-01; label Jan–Mar 2024
 CHURN_WINDOW_DAYS = 90
 DATASET_END_DATE  = date(2025, 12, 31)
-BASELINE_SAMPLE_N = 2000  # rows sampled from test set for Evidently reference JSON
+BASELINE_SAMPLE_SIZE = 2000  # rows sampled from test set for Evidently reference JSON
 
 CATEGORICAL_FEATURES: list[str] = ["rfm_segment", "preferred_category"]
 NUMERIC_FEATURES: list[str] = [
@@ -138,6 +139,8 @@ def _compute_rfm_scores(df: pd.DataFrame) -> pd.DataFrame:
 
 def _assign_rfm_segment(df: pd.DataFrame) -> pd.Series:
     r, f, m = df["recency_score"], df["frequency_score"], df["monetary_score"]
+    # Priority: first matching condition wins (np.select behaviour).
+    # Champion before Loyal; New before At Risk for high-recency, low-frequency customers.
     conditions = [
         (r >= 4) & (f >= 4) & (m >= 4),
         (r >= 3) & (f >= 3) & (m >= 3),
@@ -190,13 +193,6 @@ def _load_churn_data(engine: Engine, ref_date: date) -> pd.DataFrame:
         len(df), ref_date, churn_rate * 100,
     )
     return df
-
-
-# --- MLflow setup ---
-
-def _setup_mlflow(experiment_name: str) -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(experiment_name)
 
 
 # --- Threshold optimisation ---
@@ -252,21 +248,21 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
 
     # Step 4: churn rate sanity check (relaxed in FAST_MODE — sparse sample skews rates)
     train_churn_rate = float(df_train["churned"].mean())
-    import config as _cfg
-    _lo, _hi = (0.01, 0.999) if _cfg.FAST_MODE else (0.05, 0.70)
-    assert _lo < train_churn_rate < _hi, (
-        f"Unexpected churn rate {train_churn_rate:.1%} for TRAIN set. "
-        "Check label_window SQL — likely INNER JOIN dropped churned customers, "
-        "wrong obs_end date, or ref_date outside dataset range."
-    )
+    _lo, _hi = (0.01, 0.999) if config.FAST_MODE else (0.05, 0.70)
+    if not (_lo < train_churn_rate < _hi):
+        raise ValueError(
+            f"Churn rate {train_churn_rate:.1%} outside expected range [{_lo:.0%}, {_hi:.0%}]. "
+            "Check label_window SQL — wrong obs_end, INNER JOIN dropping churned customers, "
+            "or ref_date outside dataset range."
+        )
     if train_churn_rate > 0.70:
-        import logging as _log
-        _log.getLogger(__name__).warning(
+        logger.warning(
             "High churn rate %.1f%% — expected with FAST_MODE sparse sample. "
             "Run with FAST_MODE=false for representative rates.", train_churn_rate * 100
         )
 
-    # Step 5: sort for reproducible StratifiedKFold folds
+    # Step 5: sort by customer_id so StratifiedKFold fold assignment is deterministic
+    # without seeding KFold — shuffle=False means fold order = row order.
     df_train = df_train.sort_values("customer_id").reset_index(drop=True)
 
     # Step 6–7: fit OrdinalEncoder on train ONLY, transform both
@@ -303,7 +299,7 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
     )
 
     # Step 11–12: MLflow
-    _setup_mlflow("amazon_churn")
+    setup_mlflow("amazon_churn")
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     with mlflow.start_run(run_name="churn_xgboost") as run:
@@ -328,8 +324,10 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
             cv  = StratifiedKFold(n_splits=CV_FOLDS, shuffle=False)
             fold_scores = []
             for tr_idx, va_idx in cv.split(X_train, y_train):
-                X_tr = X_train.iloc[tr_idx]; y_tr = y_train.iloc[tr_idx]
-                X_va = X_train.iloc[va_idx]; y_va = y_train.iloc[va_idx]
+                X_tr = X_train[tr_idx]
+                y_tr = y_train[tr_idx]
+                X_va = X_train[va_idx]
+                y_va = y_train[va_idx]
                 clf.fit(X_tr, y_tr, verbose=False)
                 proba = clf.predict_proba(X_va)[:, 1]
                 fold_scores.append(float(roc_auc_score(y_va, proba)))
@@ -392,23 +390,48 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
 
         # Step 18: save artifacts to disk FIRST, then log to MLflow
 
-        # 18a: XGBoost model (native JSON — not pickle)
+        # 18a-i: quality gate (load_churn_model refuses to load if meets_threshold=False)
+        quality = {
+            "roc_auc":         float(roc_auc),
+            "f1_churn":        float(report["1"]["f1-score"]),
+            "threshold":       float(optimal_threshold),
+            "meets_threshold": roc_auc >= config.CHURN_MIN_ROC_AUC,
+        }
+        (models_dir / "churn_quality.json").write_text(json.dumps(quality, indent=2))
+        mlflow.log_artifact(str(models_dir / "churn_quality.json"))
+
+        # 18a-ii: XGBoost model (native JSON — not pickle)
         model_path = models_dir / "churn_model.json"
         model.save_model(str(model_path))
         mlflow.log_artifact(str(model_path))
 
-        # 18b: SHAP TreeExplainer (pickled — pre-loaded once in FastAPI lifespan)
+        # 18b: SHAP TreeExplainer (JSON — no pickle, no arbitrary code execution on load)
         explainer = shap.TreeExplainer(model)
-        explainer_path = models_dir / "churn_explainer.pkl"
-        with open(explainer_path, "wb") as f:
-            pickle.dump(explainer, f)
+        explainer_path = models_dir / "churn_explainer.json"
+        explainer.save(str(explainer_path))
         mlflow.log_artifact(str(explainer_path))
 
-        # 18c: OrdinalEncoder (pickled)
-        encoder_path = models_dir / "churn_encoder.pkl"
-        with open(encoder_path, "wb") as f:
-            pickle.dump(encoder, f)
+        # 18b-ii: SHAP baseline mean |SHAP| per feature (used by shap_monitoring.py for drift detection)
+        _shap_sample_n = min(500, len(X_test))
+        _sv = explainer.shap_values(X_test[:_shap_sample_n])
+        _shap_arr = _sv[1] if isinstance(_sv, list) else _sv   # positive class for classifiers
+        _mean_abs_shap = dict(zip(ALL_FEATURES, np.abs(_shap_arr).mean(axis=0).tolist()))
+        _shap_baseline = {
+            "mean_abs_shap": _mean_abs_shap,
+            "n_samples":     _shap_sample_n,
+            "features":      ALL_FEATURES,
+        }
+        shap_baseline_path = models_dir / "churn_shap_baseline.json"
+        shap_baseline_path.write_text(json.dumps(_shap_baseline, indent=2))
+        mlflow.log_artifact(str(shap_baseline_path))
+
+        # 18c: OrdinalEncoder (joblib + SHA-256 checksum — detects tampering on load)
+        encoder_path = models_dir / "churn_encoder.joblib"
+        joblib.dump(encoder, encoder_path)
+        checksum = hashlib.sha256(encoder_path.read_bytes()).hexdigest()
+        (models_dir / "churn_encoder.sha256").write_text(checksum)
         mlflow.log_artifact(str(encoder_path))
+        mlflow.log_artifact(str(models_dir / "churn_encoder.sha256"))
 
         # 18d: feature names JSON (dict — not list; Section 5 contract)
         feature_names_data = {
@@ -422,11 +445,20 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
             json.dump(feature_names_data, f, indent=2)
         mlflow.log_artifact(str(fn_path))
 
-        # 18e: baseline churn probabilities for Evidently drift (2000-row sample)
+        # 18e-i: F1-optimised threshold (saved separately from baseline — load_churn_model reads this)
+        threshold_path = models_dir / "churn_threshold.json"
+        with open(threshold_path, "w") as f:
+            json.dump({"threshold": float(optimal_threshold)}, f)
+        if mlflow.active_run() is not None:
+            mlflow.log_artifact(str(threshold_path))
+        else:
+            logger.debug("No active MLflow run — skipping artifact logging for threshold")
+
+        # 18e-ii: baseline churn probabilities for Evidently drift (2000-row sample)
         rng = np.random.RandomState(42)
         sample_idx = rng.choice(
             len(df_test),
-            size=min(BASELINE_SAMPLE_N, len(df_test)),
+            size=min(BASELINE_SAMPLE_SIZE, len(df_test)),
             replace=False,
         )
         baseline_stats: dict[str, Any] = {
@@ -441,7 +473,7 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
             "n_samples":      int(len(sample_idx)),
             "n_test_total":   int(len(y_test)),
             "test_ref_date":  str(TEST_REF_DATE),
-            "generated_at":   datetime.now().isoformat(),
+            "generated_at":   datetime.utcnow().isoformat(),
         }
         baseline_path = models_dir / "baseline_churn_proba.json"
         with open(baseline_path, "w") as f:
@@ -449,9 +481,50 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
         mlflow.log_artifact(str(baseline_path))
 
         mlflow.set_tag("mlflow.runName", "churn_xgboost")
+
+        # Step 18f: versioned artifact directory + metadata + registry registration
+        _version = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        _vdir = ARTIFACTS_DIR / "models" / "churn" / _version
+        _vdir.mkdir(parents=True, exist_ok=True)
+        _metadata = {
+            "version":          _version,
+            "model_name":       "churn",
+            "trained_at":       datetime.utcnow().isoformat(),
+            "roc_auc":          float(roc_auc),
+            "f1_churn":         float(report["1"]["f1-score"]),
+            "threshold":        float(optimal_threshold),
+            "training_ref_date": str(TRAIN_REF_DATE),
+            "feature_count":    len(ALL_FEATURES),
+            "meets_threshold":  roc_auc >= config.CHURN_MIN_ROC_AUC,
+        }
+        (_vdir / "metadata.json").write_text(json.dumps(_metadata, indent=2))
+        # Copy all artifacts into versioned directory
+        for _fname in [
+            "churn_model.json", "churn_explainer.json",
+            "churn_encoder.joblib", "churn_encoder.sha256",
+            "churn_threshold.json", "churn_quality.json",
+            "churn_feature_names.json", "baseline_churn_proba.json",
+        ]:
+            _src = models_dir / _fname
+            if _src.exists():
+                import shutil as _shutil
+                _shutil.copy2(_src, _vdir / _fname)
+
+        # Register as "candidate" — DAG promotes after quality validation
+        from src.model_registry.registry import ModelRecord, register
+        register(ModelRecord(
+            version=_version,
+            model_name="churn",
+            artifact_dir=f"models/churn/{_version}",
+            status="candidate",
+            trained_at=_metadata["trained_at"],
+            roc_auc=float(roc_auc),
+            threshold=float(optimal_threshold),
+            feature_count=len(ALL_FEATURES),
+        ))
         logger.info(
-            "All churn artifacts saved to %s | MLflow run_id=%s",
-            models_dir, run.info.run_id,
+            "All churn artifacts saved to %s | versioned to %s | MLflow run_id=%s",
+            models_dir, _vdir, run.info.run_id,
         )
 
     # Step 19: return bundle
@@ -467,10 +540,15 @@ def train_churn_model(engine: Engine) -> ChurnModelBundle:
     )
 
 
-def load_churn_model() -> ChurnModelBundle:
+def load_churn_model(version_dir: Path | None = None) -> ChurnModelBundle:
     """
     Loads churn model bundle from disk.
     Called once in FastAPI lifespan — never per-request.
+
+    Resolution order for artifact directory:
+        1. version_dir if explicitly supplied (e.g. by retraining DAG)
+        2. Registry production entry  → artifacts/models/churn/<version>/
+        3. Flat fallback              → artifacts/models/  (pre-registry layout)
 
     FastAPI inference contract:
         1. Feast online features → DataFrame (any column order)
@@ -478,19 +556,55 @@ def load_churn_model() -> ChurnModelBundle:
         3. X = df[feature_names]    # reorder AFTER encoding
         4. model.predict_proba(X)[:, 1]
     """
-    models_dir = ARTIFACTS_DIR / "models"
+    if version_dir is None:
+        from src.model_registry.registry import get_production_artifact_dir
+        version_dir = get_production_artifact_dir("churn") or (ARTIFACTS_DIR / "models")
+
+    models_dir = version_dir
+
+    q_path = models_dir / "churn_quality.json"
+    if q_path.exists():
+        q = json.loads(q_path.read_text())
+        if not q.get("meets_threshold", True):
+            raise RuntimeError(
+                f"Churn model ROC-AUC={q['roc_auc']:.3f} is below production threshold "
+                f"{config.CHURN_MIN_ROC_AUC}. Retrain with more data."
+            )
 
     model = xgb.XGBClassifier()
     model.load_model(str(models_dir / "churn_model.json"))
 
-    with open(models_dir / "churn_explainer.pkl", "rb") as f:
-        explainer: Any = pickle.load(f)
+    explainer_path = models_dir / "churn_explainer.json"
+    try:
+        explainer: Any = shap.TreeExplainer.load(str(explainer_path))
+    except (AttributeError, FileNotFoundError) as e:
+        raise RuntimeError(
+            "SHAP explainer load failed. Ensure shap>=0.44.0 and retrain the model."
+        ) from e
 
-    with open(models_dir / "churn_encoder.pkl", "rb") as f:
-        encoder: OrdinalEncoder = pickle.load(f)
+    encoder_path  = models_dir / "churn_encoder.joblib"
+    checksum_path = models_dir / "churn_encoder.sha256"
+    if checksum_path.exists():
+        expected = checksum_path.read_text().strip()
+        actual   = hashlib.sha256(encoder_path.read_bytes()).hexdigest()
+        if actual != expected:
+            raise ValueError("Encoder checksum mismatch — possible file tampering detected")
+    encoder: OrdinalEncoder = joblib.load(encoder_path)
 
     with open(models_dir / "churn_feature_names.json") as f:
         names: dict[str, Any] = json.load(f)
+
+    # Load F1-optimised threshold; fall back to env-var config if artifact is missing
+    threshold_path = models_dir / "churn_threshold.json"
+    if threshold_path.exists():
+        with open(threshold_path) as f:
+            threshold = float(json.load(f)["threshold"])
+        logger.info("Churn threshold loaded from artifact: %.4f", threshold)
+    else:
+        threshold = float(config.CHURN_THRESHOLD)
+        logger.warning(
+            "churn_threshold.json not found — using config default %.4f", threshold
+        )
 
     logger.info("Churn model bundle loaded from %s", models_dir)
     return ChurnModelBundle(
@@ -499,7 +613,7 @@ def load_churn_model() -> ChurnModelBundle:
         encoder=encoder,
         feature_names=names["all_features"],
         categorical_features=names["categorical_features"],
-        threshold=float(config.CHURN_THRESHOLD),  # can be overridden via env var
+        threshold=threshold,
         churn_rate_train=0.0,   # not persisted — training-time only
         churn_rate_test=0.0,
     )

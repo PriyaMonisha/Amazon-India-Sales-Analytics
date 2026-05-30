@@ -9,7 +9,8 @@ from mlxtend.frequent_patterns import association_rules, fpgrowth
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from config import ARTIFACTS_DIR, FAST_MODE, MLFLOW_TRACKING_URI, RANDOM_STATE, SAMPLE_ROWS
+from config import ARTIFACTS_DIR, FAST_MODE, RANDOM_STATE, SAMPLE_ROWS
+from src.utils.mlflow_utils import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,6 @@ WHERE dp.subcategory IS NOT NULL
 GROUP BY dp.subcategory
 ORDER BY order_count DESC
 """)
-
-
-def _setup_mlflow(experiment_name: str) -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(experiment_name)
 
 
 def _build_popularity_fallback(popularity_df: pd.DataFrame) -> dict[str, Any]:
@@ -157,7 +153,7 @@ def train_recommendation_model(engine: Engine) -> pd.DataFrame:
     rules_path = models_dir / "association_rules.parquet"
     rules.to_parquet(rules_path, index=False)
 
-    _setup_mlflow("amazon_recommendations")
+    setup_mlflow("amazon_recommendations")
     with mlflow.start_run(run_name="fp_growth_recommendations") as run:
         mlflow.log_params({
             "min_support_used":         min_support_used if min_support_used else "none",

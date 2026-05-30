@@ -4,15 +4,19 @@ import logging
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.dependencies import verify_api_key
 from api.models import ChurnExplainResponse, ChurnResponse, ShapContribution
+from src.ab_testing.router import choose_version
+from src.ab_testing.tracker import record_prediction
 from src.features.feature_store import get_online_features
 from src.models.churn import NUMERIC_FEATURES          # confirmed at churn.py:46
 from src.monitoring.drift import maybe_run_drift_check, record_churn_features
 from src.monitoring.metrics import CHURN_PROBABILITY_HISTOGRAM
+from src.monitoring.shap_monitoring import maybe_update_shap_metrics, record_shap_values
 
-router = APIRouter(tags=["churn"])
+router = APIRouter(tags=["churn"], dependencies=[Depends(verify_api_key)])
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +60,17 @@ def _encode_and_predict(df: pd.DataFrame, bundle: dict) -> tuple[float, np.ndarr
 
 @router.get("/churn/{customer_id}", response_model=ChurnResponse)
 def predict_churn(customer_id: str, request: Request):
-    bundle = request.app.state.models.get("churn")
+    # A/B routing: use challenger bundle when experiment is active, else champion
+    ab_cfg = getattr(request.app.state, "ab_config", None)
+    challenger_bundle = request.app.state.models.get("churn_challenger")
+    ab_version = "champion"
+
+    if ab_cfg and ab_cfg.get("enabled") and challenger_bundle is not None:
+        ab_version = choose_version(customer_id, float(ab_cfg.get("challenger_traffic_pct", 0.10)))
+        bundle = challenger_bundle if ab_version == "challenger" else request.app.state.models.get("churn")
+    else:
+        bundle = request.app.state.models.get("churn")
+
     if bundle is None:
         raise HTTPException(503, detail="Churn model not loaded")
 
@@ -72,6 +86,16 @@ def predict_churn(customer_id: str, request: Request):
         maybe_run_drift_check()   # thread-safe; auto-fires when buffer >= 100
     except Exception as e:
         logger.warning("monitoring error (non-fatal): %s", e)
+
+    # A/B prediction recording — non-fatal
+    if ab_cfg and ab_cfg.get("enabled"):
+        try:
+            from sqlalchemy import create_engine
+            import config as _cfg
+            _engine = create_engine(_cfg.DB_URL)
+            record_prediction(customer_id, ab_version, prob, _engine)
+        except Exception as e:
+            logger.warning("A/B recording error (non-fatal): %s", e)
 
     return ChurnResponse(
         customer_id=customer_id,
@@ -109,6 +133,13 @@ def explain_churn(customer_id: str, request: Request):
         for i in range(len(feat_names))
     ]
     contributions.sort(key=lambda c: abs(c.shap_value), reverse=True)
+
+    # SHAP drift monitoring — non-fatal; must never break inference
+    try:
+        record_shap_values({c.feature: c.shap_value for c in contributions})
+        maybe_update_shap_metrics()
+    except Exception as e:
+        logger.warning("SHAP monitoring error (non-fatal): %s", e)
 
     return ChurnExplainResponse(
         customer_id=customer_id,

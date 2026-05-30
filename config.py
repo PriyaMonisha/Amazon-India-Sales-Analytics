@@ -17,7 +17,10 @@ FAST_MODE = os.getenv("FAST_MODE", "true").lower() == "true"
 # LOCAL uses port 5433 because 5432 is taken by a pre-existing local PostgreSQL.
 # Docker containers talk to each other on port 5432 (internal Docker network).
 DB_URLS = {
-    Env.LOCAL:   "postgresql+psycopg2://postgres:REDACTED@localhost:5432/amazon_sales",
+    Env.LOCAL:   os.getenv(
+        "AMAZON_DB_URL",
+        "postgresql+psycopg2://postgres:postgres@localhost:5432/amazon_sales",
+    ),
     Env.DOCKER:  "postgresql+psycopg2://postgres:postgres@postgres:5432/amazon_sales",
     Env.AIRFLOW: os.getenv(
         "AMAZON_DB_URL",  # custom var — NOT AIRFLOW_CONN_POSTGRES_DEFAULT
@@ -61,6 +64,7 @@ DRIFT_THRESHOLD: float = 0.10
 CHURN_MIN_ROC_AUC: float = 0.72
 FORECAST_MAX_WMAPE: float = 0.25
 PRICING_MIN_R2: float = 0.45
+DRIFT_RETRAIN_THRESHOLD: float = float(os.getenv("DRIFT_RETRAIN_THRESHOLD", "0.30"))
 
 # --- FAST_MODE params ---
 N_OPTUNA_TRIALS: int = 10 if FAST_MODE else 50

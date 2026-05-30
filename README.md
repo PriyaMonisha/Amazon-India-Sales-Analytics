@@ -2,6 +2,7 @@
 
 > **11 years of Amazon India sales data (2015–2025) · 1.1 million transactions · 5 production ML models · Full MLOps stack**
 
+![CI](https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-orange?style=flat)
 ![Prophet](https://img.shields.io/badge/Prophet-1.1-blue?style=flat)
@@ -14,6 +15,14 @@
 ![Grafana](https://img.shields.io/badge/Grafana-Prometheus-F46800?style=flat&logo=grafana&logoColor=white)
 
 A production-grade machine learning platform built on a decade of Amazon India e-commerce data. Covers the complete ML lifecycle: raw data ingestion → feature engineering → model training → real-time serving → monitoring → interactive dashboard.
+
+**Engineering highlights:** sub-millisecond inference latency · authenticated API with rate limiting · drift-triggered auto-retraining · hash-based A/B testing · SHAP feature importance monitoring · versioned model registry · 96 automated tests · GitHub Actions CI
+
+---
+
+## Security Note
+
+An early-development database password was accidentally committed in a prior commit and has since been rotated (now invalid). All credentials are managed via `.env` (gitignored). This project uses synthetic/public Amazon India sales data only.
 
 ---
 
@@ -35,12 +44,15 @@ A production-grade machine learning platform built on a decade of Amazon India e
 | **Data Engineering** | ETL pipeline processing 11 yearly CSVs into a PostgreSQL star schema (1.1M rows, 4 tables, 10 cleaning challenges) |
 | **Feature Store** | Feast + Redis for online/offline feature serving; 14 customer features; RFM segmentation |
 | **ML Models** | 5 models: churn prediction, demand forecasting, price elasticity, product recommendations, anomaly detection |
-| **API** | FastAPI with 5 prediction endpoints + `/health` + Prometheus `/metrics` |
-| **Monitoring** | Evidently data drift detection, Prometheus metrics, 4 Grafana dashboards |
+| **Model Registry** | Versioned artifact registry (`src/model_registry/`) with atomic writes, promotion log, and one-command rollback |
+| **A/B Testing** | Hash-based deterministic champion/challenger routing with nightly outcome materialization and auto-promotion DAG |
+| **API** | FastAPI with 5 prediction endpoints + API key auth + rate limiting + `/health/models` registry endpoint |
+| **Monitoring** | Evidently drift detection · Prometheus metrics · SHAP feature importance drift · 4 Grafana dashboards |
+| **Auto-Retraining** | Airflow DAG that reads persisted drift results and triggers retraining only when drift exceeds threshold |
 | **Dashboard** | Streamlit app with **10 pages and 50+ interactive charts** |
-| **Orchestration** | 5 Airflow DAGs chained via TriggerDagRunOperator |
+| **Orchestration** | 7 Airflow DAGs (5 ETL/inference + 2 MLOps: retraining + A/B promotion) |
 | **Infra** | Full Docker Compose stack (15 services) with health checks and volume mounts |
-| **Tests** | 95 pytest tests across ETL, API, and model layers |
+| **Tests** | 96 automated tests across ETL, API, and model layers · GitHub Actions CI on every push |
 
 ---
 
@@ -157,21 +169,27 @@ Docker Compose     Pandera            SHAP
 │   ├── etl/                      # extract.py, transform.py, load.py
 │   ├── features/                 # compute.py (RFM), feature_store.py
 │   ├── models/                   # churn, forecasting, pricing, recommendation, anomaly
-│   ├── monitoring/               # metrics.py (Prometheus), drift.py (Evidently)
+│   ├── model_registry/           # registry.py — versioned artifact registry with atomic writes
+│   ├── monitoring/               # metrics.py (Prometheus), drift.py (Evidently), shap_monitoring.py
+│   ├── ab_testing/               # router.py (hash routing), tracker.py (AUC comparison), ddl.py
+│   ├── utils/                    # mlflow_utils.py (shared setup)
 │   └── validation/               # expectations.py (Pandera, 7 schema checks)
 ├── api/
-│   ├── main.py                   # FastAPI with lifespan model loading
+│   ├── main.py                   # FastAPI with lifespan model loading + A/B challenger
+│   ├── dependencies.py           # Shared auth (API key) + rate limiter (no circular imports)
 │   ├── models.py                 # Pydantic request/response schemas
-│   └── routers/                  # churn, forecast, pricing, recommendation, anomaly
+│   └── routers/                  # churn (with A/B routing), forecast, pricing, recommendation, anomaly
 ├── streamlit_app/
 │   ├── app.py                    # Overview page (KPIs, trends, geography)
 │   ├── pages/                    # 9 additional pages (0–9)
 │   └── utils/                    # db.py (queries), api_client.py, offline.py
-├── dags/                         # 5 Airflow DAGs
+├── dags/                         # 7 Airflow DAGs (5 ETL/inference + model_retraining + ab_promotion)
+├── scripts/                      # train_churn.py (CLI wrapper), materialize_ab_outcomes.py
 ├── feast_repo/                   # Feature views, entities, feature services
 ├── monitoring/                   # Grafana dashboards, Prometheus config
-├── tests/                        # test_etl.py, test_api.py, test_models.py (95 tests)
-├── requirements/                 # base.txt, dev.txt, airflow.txt
+├── .github/workflows/            # ci.yml — lint + 96 tests on every push
+├── tests/                        # test_etl.py, test_api.py, test_models.py (96 tests)
+├── requirements/                 # base.txt, dev.txt, api.txt, ml.txt, etl.txt
 ├── Dockerfile.api
 ├── Dockerfile.streamlit
 └── docker-compose.yml            # 15-service full stack
@@ -185,13 +203,25 @@ Docker Compose     Pandera            SHAP
 - Python 3.11
 - PostgreSQL 15+ installed locally
 
+### Environment Configuration
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set:
+- **`AMAZON_DB_URL`** — full PostgreSQL connection string with your password
+- **`API_KEY`** — a random 32-character secret for the API (generate with `openssl rand -hex 32`)
+
+> **Never commit `.env`** — it contains real credentials and is gitignored.
+
 ### Option A — Local Dev (recommended)
 
 ```bash
 git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
 cd Amazon-India-Sales-Analytics
 make setup                    # create venv + install deps + copy .env
-# Edit .env — set POSTGRES_PASSWORD to your local PostgreSQL password
+# Edit .env — set AMAZON_DB_URL and API_KEY
 make etl                      # load 1.1M rows into PostgreSQL (~15 min, one-time)
 make eda                      # generate 23 EDA charts
 make serve &                  # start FastAPI on :8000
@@ -226,7 +256,7 @@ Full stack → Dashboard **:8501** · API **:8000** · Grafana **:3000** · Airf
 | `make monitor` | Start Prometheus + Grafana only (no full stack) |
 | `make all` | Full Docker Compose stack — all 15 services |
 | `make docs` | Regenerate Analytics Report and Data Dictionary PDFs |
-| `make test` | Run full pytest suite (95 tests) |
+| `make test` | Run full pytest suite (96 tests) |
 | `make test-fast` | Fast test run — stop on first failure |
 | `make test-cov` | Tests with HTML coverage report |
 | `make clean` | Delete all `__pycache__` and `.pyc` files |
@@ -273,26 +303,48 @@ All charts generated by `notebooks/02_eda.py` and saved to `artifacts/charts/`:
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Service health + model load status |
-| GET | `/metrics` | Prometheus metrics |
-| POST | `/predict/churn` | Churn probability + SHAP explanation |
-| POST | `/predict/forecast` | Demand forecast (12-month) |
-| POST | `/predict/pricing` | Price elasticity + optimal price |
-| POST | `/predict/recommendations` | Product recommendations |
-| POST | `/predict/anomaly` | Anomaly score for a transaction |
-| POST | `/monitor/drift/run` | Trigger Evidently drift report |
+All `/predict/*` and `/monitor/*` endpoints require an `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: $API_KEY" http://localhost:8000/predict/churn/CUST001
+```
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/health` | None | Service health + model load status |
+| GET | `/metrics` | None | Prometheus metrics |
+| GET | `/predict/churn/{id}` | Required | Churn probability + threshold |
+| GET | `/predict/churn/{id}/explain` | Required | SHAP feature contributions |
+| GET | `/predict/forecast/{subcategory}` | Required | Demand forecast (12-month) |
+| GET | `/predict/pricing/{subcategory}` | Required | Price elasticity + optimal price |
+| GET | `/predict/recommend/{subcategory}` | Required | Product recommendations |
+| POST | `/predict/anomaly` | Required | Anomaly score for a transaction |
+| POST | `/monitor/drift/run` | Required | Trigger Evidently drift report |
 
 ---
 
 ## Tests
 
 ```bash
-make test           # full suite (95 tests: 43 ETL · 30 API · 22 model)
+make test           # full suite (96 tests: 43 ETL · 30 API · 23 model)
 make test-fast      # stop on first failure
 make test-cov       # with HTML coverage report
 ```
+
+CI runs automatically on every push via `.github/workflows/ci.yml`.
+
+---
+
+## Production Readiness
+
+| Category | What's Implemented |
+|---|---|
+| **Security** | API key auth on all endpoints · no secrets in VCS · SHAP explainer in JSON (no pickle) · encoder checksum verification |
+| **Performance** | Models preloaded at startup — zero disk I/O per request (<1 ms inference) · vectorised ETL transforms |
+| **Reliability** | Model quality gates block serving underperforming models · 96 tests · CI on every push |
+| **MLOps** | Versioned model registry · drift-triggered auto-retraining DAG · A/B champion/challenger framework |
+| **Observability** | Prometheus request metrics · SHAP feature drift monitoring · Evidently dataset drift · Grafana dashboards |
+| **Scalability** | Rate limiting on compute-heavy endpoints · `filelock` atomic writes for concurrent Airflow + API access |
 
 ---
 
@@ -302,9 +354,12 @@ make test-cov       # with HTML coverage report
 - **Temporal split:** Train 2015–2023, test 2024 — never random split for time-series
 - **RFM scoring:** `rank(pct=True)` + `pd.cut` — avoids "bin edges must be unique" error on skewed data
 - **Prophet serialization:** `model_to_json` (not pickle) — portable and version-safe
-- **SHAP:** Pre-loaded in FastAPI lifespan once; not per-request
+- **SHAP:** Pre-loaded in FastAPI lifespan once; separate `churn_shap_baseline.json` for drift monitoring
 - **Feast:** Two FeatureViews — training inputs vs prediction outputs (never mixed to prevent leakage)
 - **Validation:** Pandera over Great Expectations — avoids Windows MAX_PATH issues
+- **A/B routing:** SHA-256 hash of `customer_id` → deterministic bucket assignment (same customer always gets same model version)
+- **Airflow isolation:** Drift status and registry state written to filesystem — Airflow DAGs never read API in-memory state
+- **Model registry:** JSON manifest with `filelock` + `tempfile` atomic writes — safe under concurrent Airflow task execution
 
 ---
 

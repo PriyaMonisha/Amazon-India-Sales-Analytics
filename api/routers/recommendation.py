@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.dependencies import verify_api_key
 from api.models import RecommendedItem, RecommendationResponse
 from src.models.recommendation import get_recommendations
 
-router = APIRouter(tags=["recommendation"])
+router = APIRouter(tags=["recommendation"], dependencies=[Depends(verify_api_key)])
 logger = logging.getLogger(__name__)
 
 

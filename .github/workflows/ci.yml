@@ -1,0 +1,47 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: amazon_sales
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements/base.txt \
+                      -r requirements/dev.txt \
+                      -r requirements/etl.txt \
+                      -r requirements/api.txt
+
+      - name: Lint
+        run: ruff check src/ api/ tests/
+
+      - name: Run tests
+        env:
+          FAST_MODE: "true"
+          APP_ENV: "local"
+          AMAZON_DB_URL: "postgresql+psycopg2://postgres:postgres@localhost:5432/amazon_sales"
+          API_KEY: "ci-test-key-not-for-production"
+        run: pytest tests/ -x -q --tb=short

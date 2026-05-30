@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.dependencies import limiter, verify_api_key
 from api.models import ForecastPoint, ForecastResponse
 from src.models.forecasting import slug_from_subcategory
 
-router = APIRouter(tags=["forecast"])
+router = APIRouter(tags=["forecast"], dependencies=[Depends(verify_api_key)])
 logger = logging.getLogger(__name__)
 
 
 @router.get("/forecast/{subcategory}", response_model=ForecastResponse)
-def predict_subcategory_forecast(subcategory: str, request: Request, periods: int = 3):
+@limiter.limit("60/minute")
+def predict_subcategory_forecast(request: Request, subcategory: str, periods: int = 3):
     if periods < 1 or periods > 12:
         raise HTTPException(422, detail="periods must be between 1 and 12")
 

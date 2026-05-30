@@ -330,11 +330,11 @@ def clean_sales(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         df["payment_category"] = df["payment_method"].map(PAYMENT_CATEGORIES).fillna("Other")
 
     if "is_festival_sale" in df.columns:
-        def sale_type(row: pd.Series) -> str:
-            if row.get("is_festival_sale", False):
-                return "festival"
-            return "normal"
-        df["sale_type"] = df.apply(sale_type, axis=1)
+        df["sale_type"] = np.where(
+            df["is_festival_sale"].fillna(False).astype(bool),
+            "festival",
+            "normal",
+        )
 
     # Drop always-zero or single-value columns (detected dynamically)
     cols_to_drop = []
@@ -347,10 +347,10 @@ def clean_sales(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         cols_to_drop.append("year")
     if cols_to_drop:
         df = df.drop(columns=cols_to_drop)
-        logger.info(f"Dropped always-constant/duplicate cols: {cols_to_drop}")
+        logger.info("Dropped always-constant/duplicate cols: %s", cols_to_drop)
 
     log["output_rows"] = len(df)
-    logger.info(f"Cleaning complete: {log['input_rows']:,} → {log['output_rows']:,} rows | {log}")
+    logger.info("Cleaning complete: %d → %d rows | %s", log["input_rows"], log["output_rows"], log)
     return df, log
 
 
@@ -371,7 +371,7 @@ def build_cleaning_log(log: dict, artifacts_dir: Path) -> None:
     Save cleaning log with timestamp (not just date — avoids same-day overwrites).
     Also maintains rolling summary of last 30 runs.
     """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     log["run_timestamp"] = timestamp
 
     drift_dir = artifacts_dir / "drift"
@@ -387,4 +387,4 @@ def build_cleaning_log(log: dict, artifacts_dir: Path) -> None:
     history.append(log)
     summary_path.write_text(json.dumps(history[-30:], indent=2))
 
-    logger.info(f"Cleaning log saved: {run_log_path.name}")
+    logger.info("Cleaning log saved: %s", run_log_path.name)

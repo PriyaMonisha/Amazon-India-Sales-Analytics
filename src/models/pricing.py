@@ -13,7 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 import config
-from config import ARTIFACTS_DIR, MLFLOW_TRACKING_URI, RANDOM_STATE
+from config import ARTIFACTS_DIR, RANDOM_STATE
+from src.utils.mlflow_utils import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,6 @@ _FEATURE_COLS = ["log_avg_price", "month_of_year", "is_festival_month", "subcate
 _TARGET_COL   = "log_order_count"
 
 
-def _setup_mlflow(experiment_name: str) -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(experiment_name)
-
-
 def train_pricing_model(engine: Engine) -> dict[str, Any]:
     """
     Trains an XGBoost regressor to model price → demand elasticity.
@@ -136,7 +132,9 @@ def train_pricing_model(engine: Engine) -> dict[str, Any]:
     X_test  = test_df[_FEATURE_COLS].values
     y_test  = test_df[_TARGET_COL].values
 
-    _setup_mlflow("amazon_pricing")
+    setup_mlflow("amazon_pricing")
+    # No Optuna: log-log model at monthly aggregated grain is insensitive to tree depth.
+    # Add Optuna if grain drops to weekly or feature set grows beyond 6.
     params = {
         "n_estimators":     200,
         "max_depth":        4,
@@ -173,6 +171,16 @@ def train_pricing_model(engine: Engine) -> dict[str, Any]:
 
         logger.info("Pricing model — R²=%.3f | RMSE=%.4f", r2, rmse)
 
+        # Save quality gate (load_pricing_model refuses to load if meets_threshold=False)
+        quality = {
+            "r2":              float(r2),
+            "rmse":            float(rmse),
+            "meets_threshold": r2 >= config.PRICING_MIN_R2,
+        }
+        quality_path = models_dir / "pricing_quality.json"
+        quality_path.write_text(json.dumps(quality, indent=2))
+        mlflow.log_artifact(str(quality_path))
+
         # Save to disk FIRST, then log artifacts
         model_path   = models_dir / "pricing_model.json"
         encoder_path = models_dir / "pricing_encoder.pkl"
@@ -206,8 +214,17 @@ def train_pricing_model(engine: Engine) -> dict[str, Any]:
 
 
 def load_pricing_model() -> dict[str, Any]:
-    """Loads pricing model and encoder from disk."""
+    """Loads pricing model and encoder from disk. Raises RuntimeError if quality gate fails."""
     models_dir = ARTIFACTS_DIR / "models"
+
+    q_path = models_dir / "pricing_quality.json"
+    if q_path.exists():
+        q = json.loads(q_path.read_text())
+        if not q["meets_threshold"]:
+            raise RuntimeError(
+                f"Pricing model R²={q['r2']:.3f} is below production threshold "
+                f"{config.PRICING_MIN_R2}. Retrain required."
+            )
 
     model = xgb.XGBRegressor()
     model.load_model(str(models_dir / "pricing_model.json"))
@@ -224,14 +241,17 @@ def predict_optimal_price(
     subcategory: str,
     current_price: float,
     month: int | None = None,
+    bundle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Estimates demand at current price and suggests a price range.
 
     Uses log-log elasticity: elasticity ≈ d(log_quantity) / d(log_price).
+    Pass `bundle` from app.state for zero-disk-I/O inference; omit for CLI use.
     Returns dict with current_demand_estimate, price_suggestions.
     """
-    bundle  = load_pricing_model()
+    if bundle is None:
+        bundle = load_pricing_model()
     model: xgb.XGBRegressor = bundle["model"]
     encoder: OrdinalEncoder = bundle["encoder"]
 

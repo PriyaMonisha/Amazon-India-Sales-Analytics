@@ -10,7 +10,8 @@ from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from config import ARTIFACTS_DIR, MLFLOW_TRACKING_URI, RANDOM_STATE
+from config import ARTIFACTS_DIR, RANDOM_STATE
+from src.utils.mlflow_utils import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,6 @@ WHERE ft.final_amount_inr IS NOT NULL
 """)
 
 _FEATURE_COLS = ["final_amount_inr", "discount_pct", "delivery_days", "is_return"]
-
-
-def _setup_mlflow(experiment_name: str) -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(experiment_name)
 
 
 def _build_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,7 +82,7 @@ def train_anomaly_model(engine: Engine) -> dict[str, Any]:
         contamination=_CONTAMINATION,
         random_state=RANDOM_STATE,
         n_estimators=100,
-        n_jobs=-1,
+        n_jobs=2,    # avoid starving co-located Docker services; -1 uses all cores
     )
     labels  = iso.fit_predict(X_scaled)   # -1 = anomaly, 1 = normal
     scores  = iso.decision_function(X_scaled)  # higher = more normal
@@ -98,7 +94,7 @@ def train_anomaly_model(engine: Engine) -> dict[str, Any]:
         n_anomalies, anomaly_rate * 100, len(labels),
     )
 
-    _setup_mlflow("amazon_anomaly")
+    setup_mlflow("amazon_anomaly")
     with mlflow.start_run(run_name="isolation_forest_anomaly") as run:
         mlflow.log_params({
             "contamination": _CONTAMINATION,
@@ -150,19 +146,15 @@ def load_anomaly_model() -> dict[str, Any]:
 
 def detect_anomalies(
     df: pd.DataFrame,
-    model: IsolationForest | None = None,
-    scaler: StandardScaler | None = None,
+    model: IsolationForest,
+    scaler: StandardScaler,
 ) -> pd.DataFrame:
     """
     Adds 'is_anomaly' (bool) and 'anomaly_score' (float) columns to df.
 
     df must contain: final_amount_inr, mrp_inr, delivery_days, is_return (or is_returned).
-    Pass pre-loaded model + scaler for FastAPI (avoids disk load per request).
+    Callers must pass pre-loaded model + scaler (no silent disk-load fallback).
     """
-    if model is None or scaler is None:
-        bundle = load_anomaly_model()
-        model  = bundle["model"]
-        scaler = bundle["scaler"]
 
     result = df.copy()
 

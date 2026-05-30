@@ -12,7 +12,6 @@ FK note: fact_transactions.order_date has NO FK constraint on dim_time.
          Validation is handled by Great Expectations, not DB constraints.
 """
 import logging
-from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text

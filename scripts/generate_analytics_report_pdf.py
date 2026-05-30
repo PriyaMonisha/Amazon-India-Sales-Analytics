@@ -17,9 +17,9 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    PageBreak, HRFlowable, Image, KeepTogether,
+    PageBreak, HRFlowable, Image,
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 
 CHARTS_DIR   = PROJECT_ROOT / "artifacts" / "charts"
 OUTPUT_DIR   = PROJECT_ROOT / "artifacts" / "reports"

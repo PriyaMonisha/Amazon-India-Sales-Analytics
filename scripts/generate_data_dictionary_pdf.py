@@ -18,7 +18,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     PageBreak, HRFlowable,
 )
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 
 # ── Page metrics ───────────────────────────────────────────────────────────────
 PAGE_W = A4[0]           # 595 pts

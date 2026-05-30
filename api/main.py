@@ -10,10 +10,13 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 
 import config
+from api.dependencies import limiter
 from api.models import HealthResponse
 from api.routers import anomaly, churn, forecast, pricing, recommendation
 from src.models.anomaly import load_anomaly_model
@@ -128,6 +131,38 @@ async def lifespan(app: FastAPI):
 
     app.state.models = models
 
+    # --- A/B config + optional challenger model ---
+    ab_config_path = config.ARTIFACTS_DIR / ".." / "artifacts" / "ab_config.json"
+    # Resolve relative path robustly: ab_config lives at project root / artifacts / ab_config.json
+    ab_config_path = config.ARTIFACTS_DIR.parent / "artifacts" / "ab_config.json"
+    # Simpler: ARTIFACTS_DIR is already the artifacts/ dir
+    ab_config_path = config.ARTIFACTS_DIR / "ab_config.json"
+    ab_cfg: dict | None = None
+    if ab_config_path.exists():
+        try:
+            ab_cfg = json.loads(ab_config_path.read_text())
+        except Exception as e:
+            logger.warning("Could not load ab_config.json: %s", e)
+    app.state.ab_config = ab_cfg
+
+    # Load challenger churn model if A/B is enabled and a challenger version is set
+    models["churn_challenger"] = None
+    if ab_cfg and ab_cfg.get("enabled") and ab_cfg.get("challenger_version"):
+        try:
+            from config import ARTIFACTS_DIR
+            challenger_dir = ARTIFACTS_DIR / "models" / "churn" / ab_cfg["challenger_version"]
+            if challenger_dir.exists():
+                models["churn_challenger"] = load_churn_model(version_dir=challenger_dir)
+                logger.info(
+                    "A/B challenger loaded: version=%s (%.0f%% traffic)",
+                    ab_cfg["challenger_version"],
+                    ab_cfg.get("challenger_traffic_pct", 0.10) * 100,
+                )
+            else:
+                logger.warning("A/B challenger dir not found: %s", challenger_dir)
+        except Exception as e:
+            logger.warning("A/B challenger model not loaded: %s", e)
+
     # Set MODEL_LOADED gauges — label "recommend" matches regex capture and MODEL_NAMES constant
     MODEL_LOADED.labels(model_name="churn").set(1 if models.get("churn") is not None else 0)
     MODEL_LOADED.labels(model_name="forecast").set(1 if len(models.get("forecast", {})) > 0 else 0)
@@ -149,6 +184,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(_PredictionMetricsMiddleware)
 
 app.include_router(churn.router,          prefix="/predict")
@@ -183,8 +220,32 @@ def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@app.get("/health/models", tags=["ops"])
+def model_registry_health(request: Request) -> dict[str, Any]:
+    """
+    Returns production version metadata from the registry and A/B challenger status.
+    Useful for ops dashboards and deployment verification.
+    """
+    from src.model_registry.registry import get_production
+    return {
+        "churn_production":       get_production("churn"),
+        "pricing_production":     get_production("pricing"),
+        "ab_enabled":             bool(
+            getattr(request.app.state, "ab_config", None) and
+            request.app.state.ab_config.get("enabled")
+        ),
+        "ab_challenger_loaded":   request.app.state.models.get("churn_challenger") is not None,
+        "ab_challenger_version":  (
+            request.app.state.ab_config.get("challenger_version")
+            if getattr(request.app.state, "ab_config", None)
+            else None
+        ),
+    }
+
+
 @app.post("/monitor/drift/run", tags=["ops"])
-def trigger_drift_check() -> dict[str, Any]:
+@limiter.limit("10/minute")
+def trigger_drift_check(request: Request) -> dict[str, Any]:
     """
     Drain the prediction feature buffer and run Evidently drift detection.
     Returns {} if buffer is empty or baseline_churn_proba.json is missing (pre-training).

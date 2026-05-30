@@ -10,8 +10,9 @@ Design:
   - compute_churn_drift(df) is the pure computation: Evidently DataDriftPreset vs baseline,
     Prometheus gauge updates, returns raw Evidently dict.
 
-Rule 9  (CLAUDE.md): col_stats["drift_score"] is the KS statistic — NOT stattest_threshold.
-Rule 28 (CLAUDE.md): baseline_churn_proba.json["feature_distributions"] maps col → list.
+Implementation notes:
+  - col_stats["drift_score"] is the KS statistic — NOT "stattest_threshold" (that is the threshold).
+  - baseline_churn_proba.json["feature_distributions"] maps column_name → list of float values.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import json
 import logging
 import threading
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +37,10 @@ from src.monitoring.metrics import (
 logger = logging.getLogger(__name__)
 
 BASELINE_PATH: Path = config.ARTIFACTS_DIR / "models" / "baseline_churn_proba.json"
+_LATEST_DRIFT_PATH: Path = config.ARTIFACTS_DIR / "drift" / "latest_drift.json"
 DRIFT_CHECK_THRESHOLD: int = 100      # auto-trigger after this many buffered predictions
 _BUFFER_MAXLEN: int = 500             # rolling window cap; oldest records dropped on overflow
+_MIN_FEATURES_FOR_RETRAIN: int = 3    # absolute count guard — avoids retraining on 1-2 feature drift
 
 _buffer: deque[dict] = deque(maxlen=_BUFFER_MAXLEN)
 _drift_lock = threading.Lock()        # prevents concurrent Evidently runs on buffer threshold
@@ -49,6 +53,28 @@ _drift_lock = threading.Lock()        # prevents concurrent Evidently runs on bu
 def record_churn_features(row: dict) -> None:
     """Append one prediction's feature dict to the rolling buffer."""
     _buffer.append(row)
+
+
+def get_drift_status() -> dict[str, Any]:
+    """
+    Return the latest persisted drift result without touching the in-memory buffer.
+
+    Safe to call from Airflow DAGs (separate process — no shared buffer state).
+    Returns {"dataset_drift": False, "reason": "..."} when no result is available or stale.
+    A result older than 24 hours is treated as stale.
+    """
+    if not _LATEST_DRIFT_PATH.exists():
+        return {"dataset_drift": False, "reason": "no_check_run_yet"}
+    try:
+        data: dict = json.loads(_LATEST_DRIFT_PATH.read_text())
+        checked_at = datetime.fromisoformat(data["checked_at"])
+        age_s = (datetime.utcnow() - checked_at).total_seconds()
+        if age_s > 86400:
+            return {"dataset_drift": False, "reason": "stale", "age_seconds": age_s}
+        return data
+    except Exception as exc:
+        logger.error("Failed to read latest_drift.json: %s", exc)
+        return {"dataset_drift": False, "reason": "read_error"}
 
 
 def maybe_run_drift_check() -> None:
@@ -70,14 +96,15 @@ def flush_and_check() -> dict[str, Any]:
 
     Returns raw Evidently result dict, or {} if skipped.
     """
-    if _load_reference_df() is None:
+    ref_df = _load_reference_df()   # load once — pass through to avoid double JSON read
+    if ref_df is None:
         # Do NOT drain buffer — keep records for when baseline becomes available
         return {}
     records = list(_buffer)
     _buffer.clear()
     if not records:
         return {}
-    return compute_churn_drift(pd.DataFrame(records))
+    return compute_churn_drift(pd.DataFrame(records), reference_df=ref_df)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +116,7 @@ def _load_reference_df() -> pd.DataFrame | None:
     Load baseline feature distributions from baseline_churn_proba.json.
 
     Returns None if file missing (pre-training state) — callers must handle this gracefully.
-    Key structure confirmed by CLAUDE.md Rules 28/39: data["feature_distributions"] maps col→list.
+    Key structure: data["feature_distributions"] maps column_name → list of float values.
     """
     if not BASELINE_PATH.exists():
         logger.debug("baseline_churn_proba.json not found — drift check skipped (pre-training)")
@@ -110,9 +137,15 @@ def _load_reference_df() -> pd.DataFrame | None:
 # Core drift computation
 # ---------------------------------------------------------------------------
 
-def compute_churn_drift(current_df: pd.DataFrame) -> dict[str, Any]:
+def compute_churn_drift(
+    current_df: pd.DataFrame,
+    reference_df: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     """
     Run Evidently DataDriftPreset on current_df vs baseline reference.
+
+    Pass reference_df from flush_and_check() to avoid loading JSON twice per check.
+    If reference_df is None (standalone/test call), it is loaded from disk.
 
     Updates Prometheus gauges (all imported from src.monitoring.metrics):
         DRIFT_KS_STATISTIC          — per-feature KS score
@@ -126,7 +159,8 @@ def compute_churn_drift(current_df: pd.DataFrame) -> dict[str, Any]:
     from evidently.metric_preset import DataDriftPreset  # lazy import (heavy startup cost)
     from evidently.report import Report
 
-    reference_df = _load_reference_df()
+    if reference_df is None:
+        reference_df = _load_reference_df()
     if reference_df is None or current_df.empty:
         return {}
 
@@ -181,4 +215,19 @@ def compute_churn_drift(current_df: pd.DataFrame) -> dict[str, Any]:
         "Drift check complete — %d/%d features drifted (%.0f%%), dataset_drift=%s",
         n_drifted, n_total, share * 100, dataset_drift,
     )
+
+    # Persist summary to disk so Airflow DAGs can read it (separate process — no shared buffer)
+    drift_summary = {
+        "dataset_drift": dataset_drift,
+        "n_drifted":     n_drifted,
+        "n_total":       n_total,
+        "share":         share,
+        "checked_at":    datetime.utcnow().isoformat(),
+    }
+    try:
+        _LATEST_DRIFT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LATEST_DRIFT_PATH.write_text(json.dumps(drift_summary, indent=2))
+    except Exception as exc:
+        logger.warning("Could not persist latest_drift.json: %s", exc)
+
     return result

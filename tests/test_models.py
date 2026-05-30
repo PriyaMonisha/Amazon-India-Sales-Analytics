@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock, patch
@@ -15,8 +14,9 @@ class TestSlugFromSubcategory:
         ("Mobile Phones/Tablets", "mobile_phones_tablets"),
         ("Smart TVs",             "smart_tvs"),
         ("Audio/Video",           "audio_video"),
-        ("Home & Kitchen",        "home_&_kitchen"),  # & NOT replaced: verified forecasting.py:51
-        ("smartphones",           "smartphones"),     # idempotent
+        ("Home & Kitchen",        "home_kitchen"),         # & collapsed into single _
+        ("Books, Music & Games",  "books_music_games"),   # consecutive non-alphanum → one _
+        ("smartphones",           "smartphones"),          # idempotent
     ])
     def test_slug_from_subcategory(self, raw, expected):
         from src.models.forecasting import slug_from_subcategory

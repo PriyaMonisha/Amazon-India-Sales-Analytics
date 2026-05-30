@@ -1,7 +1,13 @@
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+# Set API_KEY before any api.main imports so verify_api_key accepts test requests
+_TEST_API_KEY = "test-api-key-for-pytest"
+os.environ.setdefault("API_KEY", _TEST_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +272,11 @@ def mock_pricing_result():
 def api_client_all_loaded(mock_anomaly_bundle):
     from starlette.testclient import TestClient
     from api.main import app
-    with TestClient(app, raise_server_exceptions=True) as client:
+    with TestClient(
+        app,
+        raise_server_exceptions=True,
+        headers={"X-API-Key": _TEST_API_KEY},
+    ) as client:
         # Lifespan runs on __enter__ and sets all models to None (no artifacts).
         # Override with in-memory mocks immediately after.
         client.app.state.models = {
@@ -286,7 +296,11 @@ def api_client_all_loaded(mock_anomaly_bundle):
 def api_client_no_models():
     from starlette.testclient import TestClient
     from api.main import app
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"X-API-Key": _TEST_API_KEY},
+    ) as client:
         client.app.state.models = {
             "churn": None, "forecast": {}, "pricing": None,
             "recommendation": None, "anomaly": None,

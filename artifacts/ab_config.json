@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "challenger_traffic_pct": 0.10,
+  "min_samples_for_promotion": 1000,
+  "challenger_model": "churn",
+  "challenger_version": null
+}

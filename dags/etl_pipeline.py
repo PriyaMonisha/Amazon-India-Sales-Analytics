@@ -32,7 +32,6 @@ On success, triggers the `feature_engineering` DAG via TriggerDagRunOperator.
 ) as dag:
 
     def _extract(**context):
-        from pathlib import Path
         import config
         from src.etl.extract import load_raw_csvs, load_product_catalog
 

@@ -1,7 +1,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import mlflow
 import numpy as np
@@ -11,7 +10,8 @@ from prophet.serialize import model_from_json, model_to_json
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from config import ARTIFACTS_DIR, MLFLOW_TRACKING_URI, RANDOM_STATE
+from config import ARTIFACTS_DIR
+from src.utils.mlflow_utils import setup_mlflow
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,11 @@ _DIWALI_HOLIDAYS = pd.DataFrame({
 })
 
 # Minimum months of history required to detect yearly seasonality
-_MIN_MONTHS = 12
+MIN_HISTORY_MONTHS: int = 12
+_MIN_MONTHS = MIN_HISTORY_MONTHS  # keep internal alias for backward compat
+
+# Holdout months reserved for WMAPE evaluation
+HOLDOUT_MONTHS: int = 3
 
 # SQL to pull monthly subcategory revenue
 _MONTHLY_QUERY = text("""
@@ -48,7 +52,8 @@ ORDER BY 1, 2
 
 def slug_from_subcategory(s: str) -> str:
     """Canonical slug used in save/load/serve paths — must be identical in all 3 places."""
-    return s.lower().replace(" ", "_").replace("/", "_")
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
 
 
 def _wmape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -57,11 +62,6 @@ def _wmape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if total == 0:
         return float("inf")
     return float(np.sum(np.abs(y_true - y_pred)) / total)
-
-
-def _setup_mlflow(experiment_name: str) -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(experiment_name)
 
 
 def _train_one_subcategory(
@@ -89,8 +89,8 @@ def _train_one_subcategory(
     )
     prophet_df["ds"] = pd.to_datetime(prophet_df["ds"])
 
-    # Train/test: last 3 months held out for WMAPE evaluation
-    n_test = 3
+    # Train/test: last HOLDOUT_MONTHS held out for WMAPE evaluation
+    n_test = HOLDOUT_MONTHS
     train_df = prophet_df.iloc[:-n_test]
     test_df  = prophet_df.iloc[-n_test:]
 
@@ -157,7 +157,7 @@ def train_forecast_models(engine: Engine) -> dict[str, float]:
     subcategories = df["subcategory"].unique().tolist()
     logger.info("Found %d subcategories", len(subcategories))
 
-    _setup_mlflow("amazon_forecasting")
+    setup_mlflow("amazon_forecasting")
     wmape_by_slug: dict[str, float] = {}
     trained_slugs: list[str] = []
 

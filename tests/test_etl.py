@@ -1,7 +1,5 @@
 import pandas as pd
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from conftest import _make_minimal_valid_sales_df
 

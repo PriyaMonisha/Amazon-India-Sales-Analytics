@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.dependencies import verify_api_key
 from api.models import AnomalyRequest, AnomalyResponse
 from src.models.anomaly import detect_anomalies
 
-router = APIRouter(tags=["anomaly"])
+router = APIRouter(tags=["anomaly"], dependencies=[Depends(verify_api_key)])
 logger = logging.getLogger(__name__)
 
 

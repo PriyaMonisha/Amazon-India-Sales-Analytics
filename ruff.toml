@@ -1,0 +1,16 @@
+line-length = 120   # project uses long strings and SQL; match pre-existing style
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",   # line too long — pre-existing style across project; not enforced before
+]
+
+[lint.per-file-ignores]
+# Pre-existing PDF generation scripts use sys.path manipulation before reportlab imports
+"scripts/generate_analytics_report_pdf.py" = ["E402"]
+"scripts/generate_data_dictionary_pdf.py"  = ["E402"]
+# DAG files legitimately insert project root into sys.path before app imports
+"dags/*.py" = ["E402"]
+# Notebooks in script mode use sys.path manipulation
+"notebooks/*.py" = ["E402"]

@@ -1,11 +1,12 @@
 """
 Prometheus metric registry — single source of truth for all metric names and label names.
 
-Rule 1 (CLAUDE.md): Label names must be IDENTICAL across metrics.py, drift.py, and Grafana JSON.
+Label names must be IDENTICAL across this file, drift.py, shap_monitoring.py, and Grafana JSON:
     model_name   — one of MODEL_NAMES: churn | forecast | pricing | recommend | anomaly
     feature_name — individual feature column name (churn numeric features)
 
 Import from here everywhere. Never re-define or re-name metrics in other modules.
+Mismatched labels produce empty query results in Grafana without any error.
 """
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -76,4 +77,21 @@ CHURN_PROBABILITY_HISTOGRAM = Histogram(
     "amazon_churn_probability",
     "Distribution of predicted churn probabilities",
     buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0],
+)
+
+# ---------------------------------------------------------------------------
+# SHAP feature importance monitoring
+# Only top-10 features emitted per check to control Prometheus cardinality.
+# Label names IDENTICAL to drift metrics (model_name, feature_name).
+# ---------------------------------------------------------------------------
+SHAP_MEAN_MAGNITUDE = Gauge(
+    "amazon_shap_mean_magnitude",
+    "Rolling mean absolute SHAP value for top-10 features (updated every 100 explain calls)",
+    ["model_name", "feature_name"],
+)
+
+SHAP_DRIFT_RATIO = Gauge(
+    "amazon_shap_drift_ratio",
+    "Relative drift of SHAP magnitude vs training baseline: |current-baseline|/baseline",
+    ["model_name", "feature_name"],
 )
