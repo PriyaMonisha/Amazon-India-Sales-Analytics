@@ -199,33 +199,39 @@ Docker Compose     Pandera            SHAP
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.11
-- PostgreSQL 15+ installed locally
-
-### Environment Configuration
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set:
-- **`AMAZON_DB_URL`** — full PostgreSQL connection string with your password
-- **`API_KEY`** — a random 32-character secret for the API (generate with `openssl rand -hex 32`)
-
-> **Never commit `.env`** — it contains real credentials and is gitignored.
-
-### Option A — Local Dev (recommended)
+### Fastest way to verify the code (no data or database needed)
 
 ```bash
 git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
 cd Amazon-India-Sales-Analytics
-make setup                    # create venv + install deps + copy .env
-# Edit .env — set AMAZON_DB_URL and API_KEY
-make etl                      # load 1.1M rows into PostgreSQL (~15 min, one-time)
-make eda                      # generate 23 EDA charts
-make serve &                  # start FastAPI on :8000
-make app                      # start Streamlit on :8501
+make setup     # creates venv + installs deps + copies .env.example → .env
+make test      # runs all 96 tests — uses mocks, no database or data files required
+```
+
+All 96 tests pass without any external setup. Tests cover ETL transformations, all 5 API prediction endpoints, and model training logic — using in-memory fixtures and mocks.
+
+> **Note on data files:** Raw CSVs (1.1 M rows) and trained model artifacts are not committed to the repo due to size. Running the full pipeline (`make etl` → `make train` → `make serve`) requires PostgreSQL and the source data files. The test suite demonstrates code correctness without them.
+
+---
+
+### Full Pipeline Setup (requires PostgreSQL)
+
+**Prerequisites:** Python 3.11 · PostgreSQL 15+
+
+**1. Configure environment:**
+```bash
+# .env is auto-created by make setup — edit it to set your database credentials
+# AMAZON_DB_URL=postgresql+psycopg2://postgres:YOUR_PASSWORD@localhost:5432/amazon_sales
+# API_KEY=any-random-string-you-choose
+```
+
+**2. Run pipeline:**
+```bash
+make etl       # load data into PostgreSQL (~15 min, one-time)
+make eda       # generate 23 EDA charts
+make train     # train all 5 models + log to MLflow
+make serve &   # start FastAPI on :8000
+make app       # start Streamlit dashboard on :8501
 ```
 
 Dashboard → **http://localhost:8501** · API docs → **http://localhost:8000/docs**
