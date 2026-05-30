@@ -173,50 +173,51 @@ Docker Compose     Pandera            SHAP
 
 ### Prerequisites
 - Python 3.11
-- PostgreSQL 15+ running locally (or via Docker)
+- Docker Desktop (for the full stack) **or** PostgreSQL 15+ installed locally
 
-### 1. Clone & Install
+### Option A — Full Docker Stack (recommended)
 
 ```bash
 git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
 cd Amazon-India-Sales-Analytics
-pip install -r requirements/base.txt
+make setup        # create venv, install deps, copy .env
+make all          # docker compose up --build (15 services)
 ```
 
-### 2. Set Up PostgreSQL
+Dashboard → **http://localhost:8501** · API docs → **http://localhost:8000/docs** · Grafana → **http://localhost:3000**
 
-**Option A — Native PostgreSQL (recommended, no Docker needed):**
-```bash
-# Create the database
-psql -U postgres -c "CREATE DATABASE amazon_sales;"
-# Connection string used automatically:
-# postgresql+psycopg2://postgres:<your_password>@localhost:5432/amazon_sales
-```
-Update `config.py` line 20 with your PostgreSQL password.
-
-**Option B — Docker:**
-```bash
-docker compose up postgres redis -d
-```
-
-### 3. Load Data (one-time, ~15 min)
+### Option B — Local Dev (no Docker, PostgreSQL only)
 
 ```bash
-APP_ENV=local python notebooks/01_data_engineering.py
+git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
+cd Amazon-India-Sales-Analytics
+make setup                    # create venv + install deps
+# Edit .env — set POSTGRES_PASSWORD to your local PostgreSQL password
+make etl                      # load 1.1M rows into PostgreSQL (~15 min, one-time)
+make eda                      # generate 23 EDA charts
+make serve &                  # start FastAPI on :8000
+make app                      # start Streamlit on :8501
 ```
 
-This loads 1.1M rows into PostgreSQL. Data persists — never needs to run again.
+### All Make Commands
 
-### 4. Launch Dashboard
-
-**Windows (double-click):** `start_dashboard.bat`
-
-**Or manually:**
-```bash
-python -m streamlit run streamlit_app/app.py
-```
-
-Dashboard opens at **http://localhost:8501**
+| Command | What it does |
+|---------|-------------|
+| `make setup` | Create venv, install all dependencies, copy `.env.example` → `.env` |
+| `make etl` | Run ETL pipeline — extract CSVs, clean, load to PostgreSQL star schema |
+| `make eda` | Generate all 23 EDA charts (requires ETL done first) |
+| `make train` | Train all 5 ML models and log to MLflow |
+| `make serve` | Start FastAPI prediction API on port 8000 |
+| `make app` | Start Streamlit dashboard on port 8501 |
+| `make feast-apply` | Apply Feast feature store definitions |
+| `make feast-materialize` | Materialize features into Redis online store |
+| `make monitor` | Start Prometheus + Grafana only (no full stack) |
+| `make all` | Full Docker Compose stack — all 15 services |
+| `make docs` | Regenerate Analytics Report and Data Dictionary PDFs |
+| `make test` | Run full pytest suite (95 tests) |
+| `make test-fast` | Fast test run — stop on first failure |
+| `make test-cov` | Tests with HTML coverage report |
+| `make clean` | Delete all `__pycache__` and `.pyc` files |
 
 ---
 
