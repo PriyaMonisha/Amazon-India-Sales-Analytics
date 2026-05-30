@@ -51,5 +51,5 @@ jobs:
           FAST_MODE: "true"
           APP_ENV: "local"
           AMAZON_DB_URL: "postgresql+psycopg2://postgres:postgres@localhost:5432/amazon_sales"
-          API_KEY: "ci-test-key-not-for-production"
+          API_KEY: "test-api-key-for-pytest"
         run: pytest tests/ -x -q --tb=short
