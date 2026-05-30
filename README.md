@@ -20,12 +20,6 @@ A production-grade machine learning platform built on a decade of Amazon India e
 
 ---
 
-## Security Note
-
-An early-development database password was accidentally committed in a prior commit and has since been rotated (now invalid). All credentials are managed via `.env` (gitignored). This project uses synthetic/public Amazon India sales data only.
-
----
-
 ## Documentation
 
 | Document | Description | Regenerate |
