@@ -27,13 +27,21 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install system dependencies
+        run: sudo apt-get install -y libgomp1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements/ci.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements/base.txt \
-                      -r requirements/dev.txt \
-                      -r requirements/etl.txt \
-                      -r requirements/api.txt
+          pip install -r requirements/ci.txt
 
       - name: Lint
         run: ruff check src/ api/ tests/
