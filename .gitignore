@@ -43,3 +43,8 @@ Thumbs.db
 # AI assistant config (internal development tooling — not for repo)
 .claude/
 CLAUDE.md
+
+# Personal reference docs (stored separately)
+DATA_DICTIONARY.md
+EDA_INSIGHTS.md
+INTERVIEW_PREP_AMAZON_SALES.md
