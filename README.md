@@ -173,9 +173,24 @@ Docker Compose     Pandera            SHAP
 
 ### Prerequisites
 - Python 3.11
-- Docker Desktop (for the full stack) **or** PostgreSQL 15+ installed locally
+- PostgreSQL 15+ installed locally
 
-### Option A — Full Docker Stack (recommended)
+### Option A — Local Dev (recommended)
+
+```bash
+git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
+cd Amazon-India-Sales-Analytics
+make setup                    # create venv + install deps + copy .env
+# Edit .env — set POSTGRES_PASSWORD to your local PostgreSQL password
+make etl                      # load 1.1M rows into PostgreSQL (~15 min, one-time)
+make eda                      # generate 23 EDA charts
+make serve &                  # start FastAPI on :8000
+make app                      # start Streamlit on :8501
+```
+
+Dashboard → **http://localhost:8501** · API docs → **http://localhost:8000/docs**
+
+### Option B — Full Docker Stack (advanced, requires Docker Desktop)
 
 ```bash
 git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
@@ -184,20 +199,7 @@ make setup        # create venv, install deps, copy .env
 make all          # docker compose up --build (15 services)
 ```
 
-Dashboard → **http://localhost:8501** · API docs → **http://localhost:8000/docs** · Grafana → **http://localhost:3000**
-
-### Option B — Local Dev (no Docker, PostgreSQL only)
-
-```bash
-git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
-cd Amazon-India-Sales-Analytics
-make setup                    # create venv + install deps
-# Edit .env — set POSTGRES_PASSWORD to your local PostgreSQL password
-make etl                      # load 1.1M rows into PostgreSQL (~15 min, one-time)
-make eda                      # generate 23 EDA charts
-make serve &                  # start FastAPI on :8000
-make app                      # start Streamlit on :8501
-```
+Full stack → Dashboard **:8501** · API **:8000** · Grafana **:3000** · Airflow **:8080** · MLflow **:5001**
 
 ### All Make Commands
 
