@@ -18,13 +18,6 @@ A production-grade machine learning platform built on a decade of Amazon India e
 
 **Engineering highlights:** sub-millisecond inference latency · authenticated API with rate limiting · drift-triggered auto-retraining · hash-based A/B testing · SHAP feature importance monitoring · versioned model registry · 96 automated tests · GitHub Actions CI
 
-> **Evaluate the code in 2 minutes — no database or API key needed:**
-> ```bash
-> git clone https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics.git
-> cd Amazon-India-Sales-Analytics && make setup && make test
-> ```
-> → [Full setup instructions](#quick-start)
-
 ---
 
 ## Security Note
