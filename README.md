@@ -2,6 +2,7 @@
 
 > **11 years of Amazon India sales data (2015–2025) · 1.1 million transactions · 5 production ML models · Full MLOps stack**
 
+![CI](https://github.com/PriyaMonisha/Amazon-India-Sales-Analytics/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-orange?style=flat)
 ![Prophet](https://img.shields.io/badge/Prophet-1.1-blue?style=flat)
