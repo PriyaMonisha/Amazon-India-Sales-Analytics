@@ -201,17 +201,24 @@ app.include_router(anomaly.router,        prefix="/predict")
 @app.get("/health", response_model=HealthResponse, tags=["ops"])
 def health(request: Request):
     m = request.app.state.models
-    # forecast is always a dict (never None) — use len() > 0 to check real load status
-    return HealthResponse(
-        status="ok",
-        models_loaded={
-            "churn":          m.get("churn") is not None,
-            "forecast":       len(m.get("forecast", {})) > 0,
-            "pricing":        m.get("pricing") is not None,
-            "recommendation": m.get("recommendation") is not None,
-            "anomaly":        m.get("anomaly") is not None,
-        },
-    )
+    models_loaded = {
+        "churn":          m.get("churn") is not None,
+        "forecast":       len(m.get("forecast", {})) > 0,
+        "pricing":        m.get("pricing") is not None,
+        "recommendation": m.get("recommendation") is not None,
+        "anomaly":        m.get("anomaly") is not None,
+    }
+    # Use "degraded" when no models are loaded so /health is self-explanatory
+    # without needing to read the README (common recruiter experience)
+    all_loaded = all(models_loaded.values())
+    any_loaded = any(models_loaded.values())
+    if all_loaded:
+        status = "ok"
+    elif any_loaded:
+        status = "degraded — some models missing, run: make train"
+    else:
+        status = "degraded — no models loaded, run: make train first"
+    return HealthResponse(status=status, models_loaded=models_loaded)
 
 
 @app.get("/metrics", tags=["ops"])

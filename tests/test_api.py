@@ -26,10 +26,10 @@ class TestAppContract:
 
 @pytest.mark.api
 class TestOpsEndpoints:
-    def test_health_returns_200_ok_status(self, api_client_all_loaded):
+    def test_health_returns_200_ok_when_all_models_loaded(self, api_client_all_loaded):
         r = api_client_all_loaded.get("/health")
         assert r.status_code == 200
-        assert r.json()["status"] == "ok"
+        assert r.json()["status"] == "ok"   # "ok" only when ALL models loaded
 
     def test_health_models_loaded_are_bools(self, api_client_all_loaded):
         loaded = api_client_all_loaded.get("/health").json()["models_loaded"]
