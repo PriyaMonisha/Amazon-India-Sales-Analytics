@@ -1,9 +1,44 @@
 import os
+import sys
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import MagicMock
+
+# ---------------------------------------------------------------------------
+# Lightweight package mocks — injected BEFORE any src/ imports
+#
+# feast and prophet are module-level imports in feature_store.py and
+# forecasting.py. They install slowly on CI (C extensions, cmdstanpy).
+# Tests never exercise real Feast/Prophet logic — all calls are mocked at
+# the fixture level. These sys.modules entries let the import statements
+# resolve without the heavy packages being installed.
+#
+# On local dev where feast/prophet ARE installed, this block is a no-op
+# because the real modules are already in sys.modules.
+# ---------------------------------------------------------------------------
+def _mock_package_if_missing(pkg: str, *submodules: str) -> None:
+    if pkg not in sys.modules:
+        try:
+            __import__(pkg)
+        except ImportError:
+            root = MagicMock()
+            root.__version__ = "0.0.0"
+            sys.modules[pkg] = root
+            for sub in submodules:
+                sys.modules[f"{pkg}.{sub}"] = MagicMock()
+
+_mock_package_if_missing(
+    "feast",
+    "feature_store", "repo_config", "type_map", "on_demand_feature_view",
+    "field", "infra", "entity", "feature_view", "feature_service",
+    "data_source", "utils", "dqm",
+)
+_mock_package_if_missing(
+    "prophet",
+    "serialize", "forecaster", "plot", "diagnostics",
+)
 
 # Set API_KEY before any api.main imports so verify_api_key accepts test requests
 _TEST_API_KEY = "test-api-key-for-pytest"

@@ -28,7 +28,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install system dependencies
-        run: sudo apt-get install -y libgomp1 build-essential
+        run: sudo apt-get install -y libgomp1
 
       - name: Cache pip packages
         uses: actions/cache@v4
@@ -38,11 +38,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install grpcio binary (feast dependency — avoids slow C++ compilation)
-        run: pip install --upgrade pip && pip install grpcio --only-binary=grpcio
-
-      - name: Install project dependencies
-        run: pip install -r requirements/ci.txt
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements/ci.txt
 
       - name: Lint
         run: ruff check src/ api/ tests/
