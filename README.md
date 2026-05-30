@@ -6,6 +6,17 @@ A production-grade machine learning platform built on a decade of Amazon India e
 
 ---
 
+## Documentation
+
+| Document | Description | Regenerate |
+|----------|-------------|------------|
+| [Analytics Report (PDF)](artifacts/reports/Analytics_Report_Amazon_India_Sales_Analytics.pdf) | 23 EDA analyses with business insights, strategic recommendations, and executive summary | `make docs` |
+| [Data Dictionary (PDF)](artifacts/reports/Data_Dictionary_Amazon_India_Sales_Analytics.pdf) | Full schema reference — all tables, columns, types, constraints, and business definitions | `make docs` |
+
+> PDFs are pre-built and committed. To regenerate after code changes: `make docs`
+
+---
+
 ## What This Project Does
 
 | Layer | What's Built |

@@ -1,6 +1,6 @@
 VENV := venv/Scripts/python.exe
 
-.PHONY: setup etl eda train serve monitor all test test-fast test-cov test-collect test-etl test-api test-models clean feast-apply feast-materialize
+.PHONY: setup etl eda train serve monitor all docs test test-fast test-cov test-collect test-etl test-api test-models clean feast-apply feast-materialize
 
 # --- Setup ---
 setup:
@@ -64,6 +64,12 @@ test-api:
 
 test-models:
 	$(VENV) -m pytest tests/test_models.py -v
+
+# --- Documentation ---
+docs:
+	$(VENV) scripts/generate_data_dictionary_pdf.py
+	$(VENV) scripts/generate_analytics_report_pdf.py
+	@echo "PDFs written to artifacts/reports/"
 
 # --- Cleanup ---
 clean:
