@@ -27,15 +27,15 @@ SELECT
     dp.subcategory,
     date_trunc('month', ft.order_date)::date    AS month,
     ft.final_amount_inr                         AS price_inr,
-    ft.mrp_inr,
+    ft.original_price_inr                       AS mrp_inr,
     COUNT(*)                                    AS order_count
 FROM fact_transactions ft
 JOIN dim_products dp ON ft.product_id = dp.product_id
 WHERE ft.order_date IS NOT NULL
   AND ft.final_amount_inr > 0
-  AND ft.mrp_inr > 0
+  AND ft.original_price_inr > 0
   AND dp.subcategory IS NOT NULL
-GROUP BY 1, 2, ft.final_amount_inr, ft.mrp_inr
+GROUP BY 1, 2, ft.final_amount_inr, ft.original_price_inr
 """)
 
 
@@ -155,6 +155,7 @@ def train_pricing_model(engine: Engine) -> dict[str, Any]:
         })
 
         model = xgb.XGBRegressor(**params)
+        model._estimator_type = "regressor"  # XGBoost 2.0.x + sklearn>=1.4 compat
         model.fit(X_train, y_train, verbose=False)
 
         y_pred = model.predict(X_test)
@@ -227,6 +228,7 @@ def load_pricing_model() -> dict[str, Any]:
             )
 
     model = xgb.XGBRegressor()
+    model._estimator_type = "regressor"  # XGBoost 2.0.x + sklearn>=1.4 compat
     model.load_model(str(models_dir / "pricing_model.json"))
     encoder: OrdinalEncoder = joblib.load(models_dir / "pricing_encoder.pkl")
 

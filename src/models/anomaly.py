@@ -23,12 +23,12 @@ _ANOMALY_QUERY = text("""
 SELECT
     ft.transaction_id,
     ft.final_amount_inr,
-    ft.mrp_inr,
+    ft.original_price_inr AS mrp_inr,
     ft.delivery_days,
     CASE WHEN ft.return_status = 'Returned' THEN 1 ELSE 0 END AS is_return
 FROM fact_transactions ft
 WHERE ft.final_amount_inr IS NOT NULL
-  AND ft.mrp_inr > 0
+  AND ft.original_price_inr > 0
   AND ft.delivery_days IS NOT NULL
 """)
 
